@@ -1,0 +1,257 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─────────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────────
+
+enum UserProvider {
+  google
+
+  @@map("user_provider")
+}
+
+enum UserRole {
+  user
+  admin
+  teacher
+
+  @@map("user_role")
+}
+
+enum UserStatusType {
+  active
+  banned
+  pending
+
+  @@map("user_status_type")
+}
+
+enum UserWordStatus {
+  new
+  learning
+  familiar
+  mastered
+  forgotten
+
+  @@map("user_word_status")
+}
+
+enum QueueStatus {
+  pending
+  in_progress
+  completed
+
+  @@map("queue_status")
+}
+
+enum SessionType {
+  flashcard
+  multiple_choice
+  typing
+  mixed
+
+  @@map("session_type")
+}
+
+enum SourceType {
+  daily_queue
+  word_list
+  manual
+
+  @@map("source_type")
+}
+
+enum SessionStatus {
+  in_progress
+  completed
+  abandoned
+
+  @@map("session_status")
+}
+
+enum QuestionType {
+  definition_to_word
+  word_to_definition
+  fill_blank
+  audio_to_word
+
+  @@map("question_type")
+}
+
+// ─────────────────────────────────────────────
+// MODELS
+// ─────────────────────────────────────────────
+
+model User {
+  id        Int             @id @default(autoincrement())
+  name      String?         @db.VarChar(100)
+  email     String          @unique @db.VarChar(255)
+  image     String?         @db.VarChar(500)
+  provider  UserProvider?   @default(google)
+  role      UserRole?       @default(user)
+  status    UserStatusType? @default(active)
+  createdAt DateTime?       @default(now()) @map("created_at")
+
+  userWords         UserWord[]
+  wordLists         WordList[]
+  dailyReviewQueues DailyReviewQueue[]
+  reviewSessions    ReviewSession[]
+
+  @@map("users")
+}
+
+model Word {
+  id        Int       @id @default(autoincrement())
+  word      String    @unique @db.VarChar(100)
+  createdAt DateTime? @default(now()) @map("created_at")
+  updatedAt DateTime? @default(now()) @map("updated_at")
+
+  wordMeanings WordMeaning[]
+
+  @@map("words")
+}
+
+model WordMeaning {
+  id           Int       @id @default(autoincrement())
+  wordId       Int       @map("word_id")
+  definition   String
+  vnDefinition String    @default("") @map("vn_definition")
+  partOfSpeech String?   @db.VarChar(50) @map("part_of_speech")
+  examples     Json?
+  cefrLevel    String?   @db.VarChar(10) @map("cefr_level")
+  ukIpa        String?   @db.VarChar(100) @map("uk_ipa")
+  usIpa        String?   @db.VarChar(100) @map("us_ipa")
+  ukAudioUrl   String?   @db.VarChar(500) @map("uk_audio_url")
+  usAudioUrl   String?   @db.VarChar(500) @map("us_audio_url")
+  createdAt    DateTime? @default(now()) @map("created_at")
+
+  word          Word           @relation(fields: [wordId], references: [id], onUpdate: Cascade, onDelete: Restrict)
+  userWords     UserWord[]
+  wordListItems WordListItem[]
+
+  @@map("word_meanings")
+}
+
+model UserWord {
+  id             Int            @id @default(autoincrement())
+  userId         Int            @map("user_id")
+  wordMeaningId  Int            @map("word_meaning_id")
+  status         UserWordStatus? @default(new)
+  addedAt        DateTime?      @default(now()) @map("added_at")
+  lastReviewedAt DateTime?      @map("last_reviewed_at")
+  nextReviewAt   DateTime?      @map("next_review_at")
+  totalReviews   Int?           @default(0) @map("total_reviews")
+  correctCount   Int?           @default(0) @map("correct_count")
+  incorrectCount Int?           @default(0) @map("incorrect_count")
+  currentStreak  Int?           @default(0) @map("current_streak")
+  maxStreak      Int?           @default(0) @map("max_streak")
+  easeFactor     Decimal?       @default(2.50) @db.Decimal(4, 2) @map("ease_factor")
+  intervalDays   Int?           @default(1) @map("interval_days")
+  personalNote   String?        @map("personal_note")
+  isFavorite     Boolean?       @default(false) @map("is_favorite")
+  updatedAt      DateTime?      @default(now()) @map("updated_at")
+
+  user               User                @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  wordMeaning        WordMeaning         @relation(fields: [wordMeaningId], references: [id], onUpdate: Cascade, onDelete: Restrict)
+  reviewSessionItems ReviewSessionItem[]
+
+  @@map("user_words")
+}
+
+model WordList {
+  id          Int       @id @default(autoincrement())
+  userId      Int       @map("user_id")
+  name        String    @db.VarChar(200)
+  description String?
+  isPublic    Boolean?  @default(false) @map("is_public")
+  createdAt   DateTime? @default(now()) @map("created_at")
+  updatedAt   DateTime? @default(now()) @map("updated_at")
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wordListItems WordListItem[]
+
+  @@map("word_lists")
+}
+
+model WordListItem {
+  id            Int       @id @default(autoincrement())
+  listId        Int       @map("list_id")
+  wordMeaningId Int       @map("word_meaning_id")
+  addedAt       DateTime? @default(now()) @map("added_at")
+
+  wordList    WordList    @relation(fields: [listId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  wordMeaning WordMeaning @relation(fields: [wordMeaningId], references: [id], onUpdate: Cascade, onDelete: Restrict)
+
+  @@unique([listId, wordMeaningId])
+  @@map("word_list_items")
+}
+
+model DailyReviewQueue {
+  id             BigInt      @id @default(autoincrement())
+  userId         Int         @map("user_id")
+  reviewDate     DateTime    @db.Date @map("review_date")
+  wordMeaningIds Json?       @map("word_meaning_ids")
+  totalWords     Int?        @default(0) @map("total_words")
+  newWords       Int?        @default(0) @map("new_words")
+  reviewWords    Int?        @default(0) @map("review_words")
+  status         QueueStatus? @default(pending)
+  completedWords Int?        @default(0) @map("completed_words")
+  createdAt      DateTime?   @default(now()) @map("created_at")
+  updatedAt      DateTime?   @default(now()) @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, reviewDate])
+  @@map("daily_review_queue")
+}
+
+model ReviewSession {
+  id               BigInt         @id @default(autoincrement())
+  userId           Int            @map("user_id")
+  sessionType      SessionType?   @default(flashcard) @map("session_type")
+  sourceType       SourceType?    @default(daily_queue) @map("source_type")
+  sourceId         BigInt?        @map("source_id")
+  totalQuestions   Int?           @default(0) @map("total_questions")
+  correctAnswers   Int?           @default(0) @map("correct_answers")
+  incorrectAnswers Int?           @default(0) @map("incorrect_answers")
+  skipped          Int?           @default(0)
+  scorePercent     Decimal?       @db.Decimal(5, 2) @map("score_percent")
+  durationSeconds  Int?           @map("duration_seconds")
+  avgTimePerWordMs Int?           @map("avg_time_per_word_ms")
+  status           SessionStatus? @default(in_progress)
+  startedAt        DateTime?      @default(now()) @map("started_at")
+  finishedAt       DateTime?      @map("finished_at")
+
+  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reviewSessionItems ReviewSessionItem[]
+
+  @@map("review_sessions")
+}
+
+model ReviewSessionItem {
+  id             BigInt        @id @default(autoincrement())
+  sessionId      BigInt        @map("session_id")
+  userWordId     Int           @map("user_word_id")
+  questionType   QuestionType? @default(word_to_definition) @map("question_type")
+  userAnswer     String?       @map("user_answer")
+  isCorrect      Boolean?      @map("is_correct")
+  timeTakenMs    Int?          @map("time_taken_ms")
+  streakBefore   Int?          @map("streak_before")
+  easeBefore     Decimal?      @db.Decimal(4, 2) @map("ease_before")
+  intervalBefore Int?          @map("interval_before")
+  streakAfter    Int?          @map("streak_after")
+  easeAfter      Decimal?      @db.Decimal(4, 2) @map("ease_after")
+  intervalAfter  Int?          @map("interval_after")
+  answeredAt     DateTime?     @default(now()) @map("answered_at")
+
+  reviewSession ReviewSession @relation(fields: [sessionId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  userWord      UserWord      @relation(fields: [userWordId], references: [id], onUpdate: Cascade, onDelete: Restrict)
+
+  @@map("review_session_items")
+}
