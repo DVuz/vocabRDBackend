@@ -5,7 +5,6 @@ const nodeEnv = process.env.NODE_ENV || 'development';
 
 const datasourceMap = {
   development: env('DATABASE_URL_DEV'),
-  test: env('DATABASE_URL_TEST'),
   production: env('DATABASE_URL_PROD'),
 };
 
