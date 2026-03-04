@@ -37,6 +37,32 @@ export class WordService {
       };
     }
 
+    // Not in DB — try simple lemmatization before hitting Cambridge
+    const lemma = this.guessLemma(wordString);
+    if (lemma !== wordString) {
+      const lemmaResult = await this.prisma.word.findFirst({
+        where: { word: { equals: lemma, mode: 'insensitive' } },
+        include: { wordMeanings: true },
+      });
+      if (lemmaResult) {
+        this.logger.log(`"${wordString}" resolved to lemma "${lemma}" from DB`);
+        return {
+          id: lemmaResult.id,
+          word: lemmaResult.word,
+          meanings: lemmaResult.wordMeanings.map(m => ({
+            id: m.id,
+            partOfSpeech: m.partOfSpeech,
+            cefrLevel: m.cefrLevel,
+            definition: m.definition,
+            vnDefinition: m.vnDefinition,
+            examples: m.examples ?? [],
+            ipa: { uk: m.ukIpa, us: m.usIpa },
+            audio: { uk: m.ukAudioUrl, us: m.usAudioUrl },
+          })),
+        };
+      }
+    }
+
     // Not in DB — try crawling from Cambridge
     this.logger.log(`"${wordString}" not in DB, attempting crawl...`);
     const crawled = await this.crawler.crawlAndSave(wordString);
@@ -45,6 +71,63 @@ export class WordService {
     }
 
     throw new NotFoundException(`Word '${wordString}' not found`);
+  }
+
+  /**
+   * Simple rule-based lemmatizer to catch common English inflections.
+   * Returns the guessed base form, or the original word if no rule matches.
+   * Cambridge handles the authoritative normalization during crawling.
+   */
+  private guessLemma(word: string): string {
+    const w = word.toLowerCase().trim();
+
+    // Irregular plurals
+    const irregulars: Record<string, string> = {
+      children: 'child', men: 'man', women: 'woman', teeth: 'tooth',
+      feet: 'foot', mice: 'mouse', geese: 'goose', oxen: 'ox',
+      criteria: 'criterion', phenomena: 'phenomenon', cacti: 'cactus',
+    };
+    if (irregulars[w]) return irregulars[w];
+
+    // -ies → -y  (e.g. dialects → not applicable; bodies → body)
+    if (w.endsWith('ies') && w.length > 4) return w.slice(0, -3) + 'y';
+
+    // -ves → -f / -fe  (e.g. knives → knife)
+    if (w.endsWith('ves') && w.length > 4) {
+      const stem = w.slice(0, -3);
+      return stem + 'fe'; // try "knife" style; Cambridge will correct
+    }
+
+    // -sses / -xes / -zes / -ches / -shes → strip -es
+    if (/(?:ss|x|z|ch|sh)es$/.test(w) && w.length > 4) return w.slice(0, -2);
+
+    // -s (plain plural) but not -ss, -us, -ss  (dialects → dialect)
+    if (w.endsWith('s') && !w.endsWith('ss') && !w.endsWith('us') && w.length > 3) {
+      return w.slice(0, -1);
+    }
+
+    // Verb forms: -ing
+    if (w.endsWith('ing') && w.length > 5) {
+      // running → run (doubled consonant)
+      const stem = w.slice(0, -3);
+      if (stem.length >= 2 && stem[stem.length - 1] === stem[stem.length - 2]) {
+        return stem.slice(0, -1);
+      }
+      // making → make
+      return stem + 'e';
+    }
+
+    // Verb forms: -ed
+    if (w.endsWith('ed') && w.length > 4) {
+      const stem = w.slice(0, -2);
+      if (stem.length >= 2 && stem[stem.length - 1] === stem[stem.length - 2]) {
+        return stem.slice(0, -1); // stopped → stop
+      }
+      if (w.endsWith('ied')) return w.slice(0, -3) + 'y'; // tried → try
+      return stem + 'e'; // baked → bake (Cambridge will correct)
+    }
+
+    return w;
   }
 
   /**

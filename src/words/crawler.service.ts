@@ -146,26 +146,58 @@ export class CrawlerService {
    * Crawl a word from Cambridge, translate definitions, persist to DB,
    * and return data in the same shape as WordService.getWordWithMeanings().
    * Returns null if the word is not found on Cambridge.
+   * Automatically resolves inflected forms (e.g. "dialects" → "dialect").
    */
   async crawlAndSave(wordString: string) {
     const word = wordString.trim().toLowerCase();
     this.logger.log(`Crawling "${word}" from Cambridge...`);
 
-    let meanings = await this.crawlWord(word);
-    if (!meanings || meanings.length === 0) {
+    const crawled = await this.crawlWord(word);
+    if (!crawled || crawled.meanings.length === 0) {
       this.logger.warn(`"${word}" not found on Cambridge`);
       return null;
     }
 
-    meanings = await this.translateAll(meanings);
-    const result = await this.saveWord(word, meanings);
+    const { meanings: rawMeanings, canonicalWord } = crawled;
 
-    this.logger.log(`Saved "${word}": wordId=${result.wordId}, ${meanings.length} meanings`);
+    if (canonicalWord !== word) {
+      this.logger.log(`Cambridge resolved "${word}" → canonical form "${canonicalWord}"`);
+      // If canonical form already exists in DB, return it directly
+      const existing = await this.prisma.word.findUnique({
+        where: { word: canonicalWord },
+        include: { wordMeanings: true },
+      });
+      if (existing && existing.wordMeanings.length > 0) {
+        this.logger.log(`"${canonicalWord}" already in DB, reusing`);
+        return {
+          wordId: existing.id,
+          id: existing.id,
+          word: existing.word,
+          meanings: existing.wordMeanings.map(m => ({
+            id: m.id,
+            partOfSpeech: m.partOfSpeech,
+            cefrLevel: m.cefrLevel,
+            definition: m.definition,
+            vnDefinition: m.vnDefinition,
+            examples: (m.examples as string[]) ?? [],
+            ipa: { uk: m.ukIpa, us: m.usIpa },
+            audio: { uk: m.ukAudioUrl, us: m.usAudioUrl },
+          })),
+        };
+      }
+    }
+
+    const meanings = await this.translateAll(rawMeanings);
+    const result = await this.saveWord(canonicalWord, meanings);
+
+    this.logger.log(`Saved "${canonicalWord}": wordId=${result.wordId}, ${meanings.length} meanings`);
     return result;
   }
 
   // ── Cambridge crawl (faithfully ported from craw.js) ──────────────────────
-  private async crawlWord(word: string): Promise<RawMeaning[] | null> {
+  private async crawlWord(
+    word: string
+  ): Promise<{ meanings: RawMeaning[]; canonicalWord: string } | null> {
     const url = `${CAMBRIDGE_BASE}/${encodeURIComponent(word)}`;
     const res = await fetch(url, {
       headers: {
@@ -185,6 +217,14 @@ export class CrawlerService {
     const $ = cheerio.load(html);
 
     if (!$('.pr.dictionary, .entry-body, .di-title, .pr.entry-body__el').length) return null;
+
+    // Extract canonical headword from Cambridge page
+    // Cambridge shows the base/lemma form regardless of the search term
+    const canonicalWord =
+      $('.hw.dhw').first().text().trim().toLowerCase() ||
+      $('.di-title .hw').first().text().trim().toLowerCase() ||
+      $('.headword').first().text().trim().toLowerCase() ||
+      word;
 
     const meaningsByPos: Record<string, RawMeaning[]> = {};
     const seenDefs = new Set<string>();
@@ -314,7 +354,7 @@ export class CrawlerService {
       if (!POS_ORDER.includes(p)) sorted.push(...meaningsByPos[p]);
     });
 
-    return sorted.slice(0, MAX_MEANINGS_PER_WORD);
+    return { meanings: sorted.slice(0, MAX_MEANINGS_PER_WORD), canonicalWord };
   }
 
   // ── Translation ────────────────────────────────────────────────────────────
