@@ -190,7 +190,9 @@ export class CrawlerService {
     const meanings = await this.translateAll(rawMeanings);
     const result = await this.saveWord(canonicalWord, meanings);
 
-    this.logger.log(`Saved "${canonicalWord}": wordId=${result.wordId}, ${meanings.length} meanings`);
+    this.logger.log(
+      `Saved "${canonicalWord}": wordId=${result.wordId}, ${meanings.length} meanings`
+    );
     return result;
   }
 

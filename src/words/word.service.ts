@@ -83,9 +83,17 @@ export class WordService {
 
     // Irregular plurals
     const irregulars: Record<string, string> = {
-      children: 'child', men: 'man', women: 'woman', teeth: 'tooth',
-      feet: 'foot', mice: 'mouse', geese: 'goose', oxen: 'ox',
-      criteria: 'criterion', phenomena: 'phenomenon', cacti: 'cactus',
+      children: 'child',
+      men: 'man',
+      women: 'woman',
+      teeth: 'tooth',
+      feet: 'foot',
+      mice: 'mouse',
+      geese: 'goose',
+      oxen: 'ox',
+      criteria: 'criterion',
+      phenomena: 'phenomenon',
+      cacti: 'cactus',
     };
     if (irregulars[w]) return irregulars[w];
 
