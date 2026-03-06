@@ -15,16 +15,44 @@ export class WordService {
    * Get a Word with all its meanings (like Cambridge dictionary)
    */
   async getWordWithMeanings(wordString: string) {
-    // Try lemma FIRST so inflected forms (plurals, past tense, etc.) always
-    // resolve to the canonical base word stored in DB.
-    const lemma = this.guessLemma(wordString);
-    if (lemma !== wordString) {
+    const w = wordString.toLowerCase().trim();
+
+    // 1. Check alias table first — covers irregular forms (went→go, was→be, etc.)
+    //    that the rule-based lemmatizer can't handle, cached from prior Cambridge resolves.
+    const alias = await this.prisma.wordAlias.findUnique({ where: { alias: w } });
+    if (alias) {
+      const aliasResult = await this.prisma.word.findFirst({
+        where: { word: { equals: alias.canonicalWord, mode: 'insensitive' } },
+        include: { wordMeanings: true },
+      });
+      if (aliasResult && aliasResult.wordMeanings.length > 0) {
+        this.logger.log(`"${w}" resolved via alias table → "${alias.canonicalWord}"`);
+        return {
+          id: aliasResult.id,
+          word: aliasResult.word,
+          meanings: aliasResult.wordMeanings.map(m => ({
+            id: m.id,
+            partOfSpeech: m.partOfSpeech,
+            cefrLevel: m.cefrLevel,
+            definition: m.definition,
+            vnDefinition: m.vnDefinition,
+            examples: m.examples ?? [],
+            ipa: { uk: m.ukIpa, us: m.usIpa },
+            audio: { uk: m.ukAudioUrl, us: m.usAudioUrl },
+          })),
+        };
+      }
+    }
+
+    // 2. Rule-based lemmatizer for regular inflections (sizes→size, renovated→renovate, etc.)
+    const lemma = this.guessLemma(w);
+    if (lemma !== w) {
       const lemmaResult = await this.prisma.word.findFirst({
         where: { word: { equals: lemma, mode: 'insensitive' } },
         include: { wordMeanings: true },
       });
       if (lemmaResult && lemmaResult.wordMeanings.length > 0) {
-        this.logger.log(`"${wordString}" resolved to lemma "${lemma}" from DB`);
+        this.logger.log(`"${w}" resolved to lemma "${lemma}" from DB`);
         return {
           id: lemmaResult.id,
           word: lemmaResult.word,
@@ -42,9 +70,9 @@ export class WordService {
       }
     }
 
-    // Direct DB lookup (handles exact forms and canonical words)
+    // 3. Direct DB lookup (exact match — canonical words stored by crawler)
     const result = await this.prisma.word.findFirst({
-      where: { word: { equals: wordString, mode: 'insensitive' } },
+      where: { word: { equals: w, mode: 'insensitive' } },
       include: { wordMeanings: true },
     });
 
@@ -65,9 +93,10 @@ export class WordService {
       };
     }
 
-    // Not in DB — try crawling from Cambridge
-    this.logger.log(`"${wordString}" not in DB, attempting crawl...`);
-    const crawled = await this.crawler.crawlAndSave(wordString);
+    // 4. Not in DB — crawl from Cambridge (Cambridge will resolve canonical form
+    //    and the crawler will auto-save the alias for next time)
+    this.logger.log(`"${w}" not in DB, attempting crawl...`);
+    const crawled = await this.crawler.crawlAndSave(w);
     if (crawled) {
       return { id: crawled.id, word: crawled.word, meanings: crawled.meanings };
     }

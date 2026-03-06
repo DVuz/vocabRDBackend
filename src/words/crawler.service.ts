@@ -181,6 +181,8 @@ export class CrawlerService {
       });
       if (existing && existing.wordMeanings.length > 0) {
         this.logger.log(`"${saveAs}" already in DB, reusing`);
+        // Still record the alias so future lookups skip Cambridge entirely
+        await this.saveAlias(word, saveAs);
         return {
           wordId: existing.id,
           id: existing.id,
@@ -202,8 +204,28 @@ export class CrawlerService {
     const meanings = await this.translateAll(rawMeanings);
     const result = await this.saveWord(saveAs, meanings);
 
+    // Cache the mapping so irregular forms resolve instantly next time
+    if (word !== saveAs) {
+      await this.saveAlias(word, saveAs);
+    }
+
     this.logger.log(`Saved "${saveAs}": wordId=${result.wordId}, ${meanings.length} meanings`);
     return result;
+  }
+
+  // ── Save alias mapping ─────────────────────────────────────────────────────
+  private async saveAlias(alias: string, canonicalWord: string): Promise<void> {
+    if (alias === canonicalWord) return;
+    try {
+      await this.prisma.wordAlias.upsert({
+        where: { alias },
+        create: { alias, canonicalWord },
+        update: { canonicalWord },
+      });
+      this.logger.log(`Alias saved: "${alias}" → "${canonicalWord}"`);
+    } catch {
+      // Non-critical — ignore duplicate/race errors
+    }
   }
 
   // ── Cambridge crawl (faithfully ported from craw.js) ──────────────────────

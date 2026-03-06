@@ -234,6 +234,18 @@ model ReviewSession {
   @@map("review_sessions")
 }
 
+// Maps any inflected / variant form to the canonical Word row.
+// Populated automatically when the crawler resolves a searched term
+// to a different canonical headword on Cambridge.
+model WordAlias {
+  id            Int      @id @default(autoincrement())
+  alias         String   @unique @db.VarChar(100)   // e.g. "went", "sizes", "bought"
+  canonicalWord String   @db.VarChar(100) @map("canonical_word") // e.g. "go", "size", "buy"
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@map("word_aliases")
+}
+
 model ReviewSessionItem {
   id             BigInt        @id @default(autoincrement())
   sessionId      BigInt        @map("session_id")
