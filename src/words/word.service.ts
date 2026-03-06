@@ -15,6 +15,34 @@ export class WordService {
    * Get a Word with all its meanings (like Cambridge dictionary)
    */
   async getWordWithMeanings(wordString: string) {
+    // Try lemma FIRST so inflected forms (plurals, past tense, etc.) always
+    // resolve to the canonical base word stored in DB.
+    const lemma = this.guessLemma(wordString);
+    if (lemma !== wordString) {
+      const lemmaResult = await this.prisma.word.findFirst({
+        where: { word: { equals: lemma, mode: 'insensitive' } },
+        include: { wordMeanings: true },
+      });
+      if (lemmaResult && lemmaResult.wordMeanings.length > 0) {
+        this.logger.log(`"${wordString}" resolved to lemma "${lemma}" from DB`);
+        return {
+          id: lemmaResult.id,
+          word: lemmaResult.word,
+          meanings: lemmaResult.wordMeanings.map(m => ({
+            id: m.id,
+            partOfSpeech: m.partOfSpeech,
+            cefrLevel: m.cefrLevel,
+            definition: m.definition,
+            vnDefinition: m.vnDefinition,
+            examples: m.examples ?? [],
+            ipa: { uk: m.ukIpa, us: m.usIpa },
+            audio: { uk: m.ukAudioUrl, us: m.usAudioUrl },
+          })),
+        };
+      }
+    }
+
+    // Direct DB lookup (handles exact forms and canonical words)
     const result = await this.prisma.word.findFirst({
       where: { word: { equals: wordString, mode: 'insensitive' } },
       include: { wordMeanings: true },
@@ -35,32 +63,6 @@ export class WordService {
           audio: { uk: m.ukAudioUrl, us: m.usAudioUrl },
         })),
       };
-    }
-
-    // Not in DB — try simple lemmatization before hitting Cambridge
-    const lemma = this.guessLemma(wordString);
-    if (lemma !== wordString) {
-      const lemmaResult = await this.prisma.word.findFirst({
-        where: { word: { equals: lemma, mode: 'insensitive' } },
-        include: { wordMeanings: true },
-      });
-      if (lemmaResult) {
-        this.logger.log(`"${wordString}" resolved to lemma "${lemma}" from DB`);
-        return {
-          id: lemmaResult.id,
-          word: lemmaResult.word,
-          meanings: lemmaResult.wordMeanings.map(m => ({
-            id: m.id,
-            partOfSpeech: m.partOfSpeech,
-            cefrLevel: m.cefrLevel,
-            definition: m.definition,
-            vnDefinition: m.vnDefinition,
-            examples: m.examples ?? [],
-            ipa: { uk: m.ukIpa, us: m.usIpa },
-            audio: { uk: m.ukAudioUrl, us: m.usAudioUrl },
-          })),
-        };
-      }
     }
 
     // Not in DB — try crawling from Cambridge
