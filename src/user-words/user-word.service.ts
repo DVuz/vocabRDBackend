@@ -1,4 +1,10 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
 
 @Injectable()
@@ -112,6 +118,40 @@ export class UserWordService {
         hasNext: page * pageSize < total,
         hasPrev: page > 1,
       },
+    };
+  }
+
+  /**
+   * Xóa 1 UserWord khỏi danh sách học của user.
+   * Chỉ cho phép xóa nếu từ chưa được ôn tập lần nào (totalReviews === 0).
+   */
+  async removeUserWord(userId: number, userWordId: number) {
+    const userWord = await this.prisma.userWord.findUnique({
+      where: { id: userWordId },
+      include: { wordMeaning: { include: { word: true } } },
+    });
+
+    if (!userWord) {
+      throw new NotFoundException(`Không tìm thấy userWord id=${userWordId}`);
+    }
+
+    if (userWord.userId !== userId) {
+      throw new ForbiddenException('Bạn không có quyền xóa từ này');
+    }
+
+    if ((userWord.totalReviews ?? 0) > 0) {
+      throw new BadRequestException(
+        'Không thể xóa từ đã được ôn tập. Chỉ có thể xóa từ chưa ôn tập lần nào.'
+      );
+    }
+
+    await this.prisma.userWord.delete({ where: { id: userWordId } });
+
+    return {
+      message: `Đã xóa "${userWord.wordMeaning.word.word}" khỏi danh sách học`,
+      userWordId,
+      word: userWord.wordMeaning.word.word,
+      meaningId: userWord.wordMeaningId,
     };
   }
 

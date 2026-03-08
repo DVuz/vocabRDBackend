@@ -1,4 +1,14 @@
-import { Body, Controller, Get, HttpCode, Param, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  Param,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard, type JwtPayload } from '../auth/jwt-auth.guard';
 import { UserWordService } from './user-word.service';
@@ -39,6 +49,18 @@ export class UserWordController {
       status,
       isFavorite === 'true' ? true : isFavorite === 'false' ? false : undefined
     );
+  }
+
+  /**
+   * DELETE /user-words/:id
+   * Xóa 1 từ khỏi danh sách học của user đang đăng nhập.
+   * Chỉ xóa được nếu từ chưa ôn tập lần nào (totalReviews === 0).
+   */
+  @Delete('user-words/:id')
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard)
+  async removeUserWord(@CurrentUser() user: JwtPayload, @Param('id') id: string) {
+    return this.userWordService.removeUserWord(user.sub, parseInt(id));
   }
 
   /**

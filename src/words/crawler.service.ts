@@ -160,20 +160,13 @@ export class CrawlerService {
 
     const { meanings: rawMeanings, canonicalWord } = crawled;
 
-    // -ing forms (gerund/present-participle) are saved under the searched form.
-    // Other inflections (plural nouns, etc.) redirect to the canonical base form.
-    const isIngForm =
-      word !== canonicalWord && word.endsWith('ing') && !canonicalWord.endsWith('ing');
-    const saveAs = isIngForm ? word : canonicalWord;
+    // Always save under the canonical (base) form that Cambridge returns.
+    // Inflected forms (adjusting→adjust, sizes→size, went→go) are recorded
+    // as aliases so future lookups skip Cambridge entirely.
+    const saveAs = canonicalWord;
 
     if (canonicalWord !== word) {
-      if (isIngForm) {
-        this.logger.log(
-          `"${word}" is an -ing form; saving under "${word}" using "${canonicalWord}"'s data`
-        );
-      } else {
-        this.logger.log(`Cambridge resolved "${word}" → canonical form "${canonicalWord}"`);
-      }
+      this.logger.log(`Cambridge resolved "${word}" → canonical form "${canonicalWord}"`);
       // If the target form already exists in DB, return it directly
       const existing = await this.prisma.word.findUnique({
         where: { word: saveAs },
