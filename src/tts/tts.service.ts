@@ -3,6 +3,7 @@ import { Injectable, InternalServerErrorException } from '@nestjs/common';
 @Injectable()
 export class TtsService {
   async synthesize(text: string): Promise<Buffer> {
+    console.log('TTS synthesize called with text:', text);
     const apiKey = process.env.ELEVENLABS_API_KEY;
     const voiceId = process.env.ELEVENLABS_VOICE_ID || 'pNInz6obpgDQGcFmaJgB';
 
@@ -19,7 +20,7 @@ export class TtsService {
       },
       body: JSON.stringify({
         text: text.substring(0, 500),
-        model_id: 'eleven_monolingual_v1',
+        model_id: 'eleven_turbo_v2_5',
         voice_settings: { stability: 0.5, similarity_boost: 0.75 },
       }),
     });
