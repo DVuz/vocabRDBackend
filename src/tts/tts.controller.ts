@@ -1,10 +1,19 @@
-import { Body, Controller, HttpCode, Post, Res } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Post, Res } from '@nestjs/common';
 import { Response } from 'express';
 import { TtsService } from './tts.service';
 
 @Controller('tts')
 export class TtsController {
   constructor(private readonly ttsService: TtsService) {}
+
+  @Get('health')
+  health() {
+    const configured = !!process.env.ELEVENLABS_API_KEY;
+    return {
+      status: configured ? 'ok' : 'missing_key',
+      voiceId: process.env.ELEVENLABS_VOICE_ID || 'pNInz6obpgDQGcFmaJgB',
+    };
+  }
 
   @Post('speak')
   @HttpCode(200)
