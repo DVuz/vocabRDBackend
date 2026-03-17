@@ -1,0 +1,50 @@
+src/
+├── common/
+│   ├── interceptors/
+│   │   └── response.interceptor.ts       ← đang có
+│   ├── filters/
+│   │   └── http-exception.filter.ts      ← tập trung xử lý lỗi
+│   └── guards/
+│       └── jwt-auth.guard.ts             ← chuyển từ auth/ vào đây
+│
+├── tts/
+│   ├── dto/
+│   │   └── speak.dto.ts                  ← S: tách validation ra
+│   ├── interfaces/
+│   │   └── tts-provider.interface.ts     ← D: abstraction, không phụ thuộc ElevenLabs
+│   ├── providers/
+│   │   └── elevenlabs.provider.ts        ← O: có thể swap sang Google TTS sau
+│   ├── tts.controller.ts
+│   ├── tts.service.ts                    ← chỉ orchestrate, gọi provider
+│   └── tts.module.ts
+│
+├── words/
+│   ├── dto/
+│   │   └── word-response.dto.ts
+│   ├── interfaces/
+│   │   └── word-lookup.interface.ts      ← D: abstraction cho lookup
+│   ├── services/
+│   │   ├── lemmatizer.service.ts         ← S: chỉ làm lemmatize
+│   │   └── word-lookup.service.ts        ← S: chỉ làm DB lookup
+│   ├── crawler.service.ts
+│   ├── word.controller.ts
+│   ├── word.service.ts                   ← orchestrate các service nhỏ
+│   └── word.module.ts
+│
+├── review/
+│   ├── dto/
+│   │   ├── submit-review.dto.ts
+│   │   └── review-item.dto.ts
+│   ├── algorithms/
+│   │   └── sm2.algorithm.ts              ← S: tách SM-2 ra khỏi service
+│   ├── review.controller.ts
+│   ├── review.service.ts                 ← chỉ gọi SM-2 + Prisma
+│   └── review.module.ts
+│
+└── user-words/
+    ├── dto/
+    │   ├── add-user-word.dto.ts
+    │   └── get-words-query.dto.ts
+    ├── user-word.controller.ts
+    ├── user-word.service.ts
+    └── user-word.module.ts
