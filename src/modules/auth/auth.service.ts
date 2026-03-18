@@ -134,20 +134,28 @@ export class AuthService {
     if (!googlePayload?.email || !googlePayload.email_verified)
       throw new UnauthorizedException('Google email not verified');
 
-    const user = await this.prisma.user.upsert({
+    const existingUser = await this.prisma.user.findFirst({
       where: { email: googlePayload.email },
-      update: {
-        name: googlePayload.name ?? undefined,
-        image: googlePayload.picture ?? undefined,
-        provider: 'google',
-      },
-      create: {
-        email: googlePayload.email,
-        name: googlePayload.name ?? null,
-        image: googlePayload.picture ?? null,
-        provider: 'google',
-      },
+      orderBy: { id: 'asc' },
     });
+
+    const user = existingUser
+      ? await this.prisma.user.update({
+          where: { id: existingUser.id },
+          data: {
+            name: googlePayload.name ?? undefined,
+            image: googlePayload.picture ?? undefined,
+            provider: 'google',
+          },
+        })
+      : await this.prisma.user.create({
+          data: {
+            email: googlePayload.email,
+            name: googlePayload.name ?? null,
+            image: googlePayload.picture ?? null,
+            provider: 'google',
+          },
+        });
 
     const payload: JwtPayload = {
       sub: user.id,
