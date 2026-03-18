@@ -1,7 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as cheerio from 'cheerio';
+import type { Element } from 'domhandler';
 import { PrismaService } from 'src/prisma/prisma.service';
 
+// ─── Constants ────────────────────────────────────────────────────────────────
 const CAMBRIDGE_DICTIONARY_BASE =
   'https://dictionary.cambridge.org/dictionary/english/';
 const CAMBRIDGE_SEARCH_DIRECT_BASE =
@@ -10,9 +12,11 @@ const CAMBRIDGE_CHECK_BASE =
   'https://dictionary.cambridge.org/dictionary/english/check?q=';
 const TRANSLATE_API =
   'https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=vi&dt=t&q=';
+
 const MAX_EXAMPLES_PER_SENSE = 3;
 const MAX_MEANINGS_PER_WORD = 15;
 const TRANSLATE_DELAY_MS = 300;
+const MIN_MEANINGS_PHASE1 = 3; // nếu Phase 1 < 3 meanings → chạy Phase 2
 
 const POS_ORDER = [
   'noun',
@@ -31,6 +35,7 @@ const POS_ORDER = [
   'abbreviation',
 ];
 
+// ─── Types ────────────────────────────────────────────────────────────────────
 interface RawMeaning {
   pos: string;
   ukIpa: string;
@@ -43,6 +48,12 @@ interface RawMeaning {
   vnDefinition?: string;
 }
 
+interface ResolvedPage {
+  response: Response;
+  html: string;
+}
+
+// ─── Pure helpers ─────────────────────────────────────────────────────────────
 function cleanText(text: string): string {
   return text
     .replace(/→\s*/g, '')
@@ -55,10 +66,11 @@ function cleanText(text: string): string {
 }
 
 function isValidDefinition(def: string): boolean {
-  const c = cleanText(def);
-  if (c.length < 10) return false;
-  if (!/[a-zA-Z]/.test(c)) return false;
-  const bad = [
+  const cleaned = cleanText(def);
+  if (cleaned.length < 10) return false;
+  if (!/[a-zA-Z]/.test(cleaned)) return false;
+
+  const blacklist = [
     /^memory address$/i,
     /^→\s*$/,
     /^[\s\n\r\t]*$/,
@@ -71,7 +83,7 @@ function isValidDefinition(def: string): boolean {
     /^phrasal verbs?:/i,
   ];
 
-  return !bad.some((pattern) => pattern.test(c));
+  return !blacklist.some((pattern) => pattern.test(cleaned));
 }
 
 function normalizePos(raw: string): string {
@@ -79,6 +91,7 @@ function normalizePos(raw: string): string {
     .replace(/[^\w\s]/g, '')
     .trim()
     .toLowerCase();
+
   const mapping: Record<string, string> = {
     n: 'noun',
     v: 'verb',
@@ -117,23 +130,20 @@ function normalizeDef(value: string): string {
 }
 
 function isSimilar(defA: string, defB: string): boolean {
-  const normalizedA = normalizeDef(defA);
-  const normalizedB = normalizeDef(defB);
-  if (normalizedA === normalizedB) return true;
+  const a = normalizeDef(defA);
+  const b = normalizeDef(defB);
 
-  const [longer, shorter] =
-    normalizedA.length > normalizedB.length
-      ? [normalizedA, normalizedB]
-      : [normalizedB, normalizedA];
+  if (a === b) return true;
 
+  const [longer, shorter] = a.length > b.length ? [a, b] : [b, a];
   if (longer.includes(shorter) && shorter.length / longer.length > 0.7) {
     return true;
   }
 
-  const wordsA = normalizedA.split(' ').filter((word) => word.length > 3);
-  const wordsB = normalizedB.split(' ').filter((word) => word.length > 3);
+  const wordsA = a.split(' ').filter((w) => w.length > 3);
+  const wordsB = b.split(' ').filter((w) => w.length > 3);
   if (wordsA.length > 3 && wordsB.length > 3) {
-    const common = wordsA.filter((word) => wordsB.includes(word));
+    const common = wordsA.filter((w) => wordsB.includes(w));
     if (common.length / Math.min(wordsA.length, wordsB.length) > 0.6) {
       return true;
     }
@@ -142,46 +152,61 @@ function isSimilar(defA: string, defB: string): boolean {
   return false;
 }
 
-function sleep(ms: number) {
+function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// ─── Service ──────────────────────────────────────────────────────────────────
 @Injectable()
 export class CambridgeCrawlerService {
   private readonly logger = new Logger(CambridgeCrawlerService.name);
 
   constructor(private readonly prisma: PrismaService) {}
 
+  // ── Public entry point ─────────────────────────────────────────────────────
   async crawlAndSave(
     searchWord: string,
   ): Promise<{ canonicalWord: string } | null> {
     const normalizedSearch = searchWord.trim().toLowerCase();
-    const crawled = await this.crawlWord(normalizedSearch);
-    if (!crawled || crawled.meanings.length === 0) return null;
 
-    const canonicalWord = crawled.canonicalWord;
-    const translatedMeanings = await this.translateAll(crawled.meanings);
+    const crawled = await this.crawlWord(normalizedSearch);
+    if (!crawled || crawled.meanings.length === 0) {
+      this.logger.warn(`"${normalizedSearch}" not found on Cambridge`);
+      return null;
+    }
+
+    const { meanings: rawMeanings, canonicalWord } = crawled;
+    const translatedMeanings = await this.translateAll(rawMeanings);
 
     await this.saveWord(canonicalWord, translatedMeanings);
 
     if (canonicalWord !== normalizedSearch) {
       await this.saveAlias(normalizedSearch, canonicalWord);
-      this.logger.log(`Alias saved: ${normalizedSearch} -> ${canonicalWord}`);
+      this.logger.log(`Alias saved: "${normalizedSearch}" → "${canonicalWord}"`);
     }
 
+    this.logger.log(
+      `Saved "${canonicalWord}": ${translatedMeanings.length} meanings`,
+    );
     return { canonicalWord };
   }
 
+  // ── Alias ──────────────────────────────────────────────────────────────────
   private async saveAlias(alias: string, canonicalWord: string): Promise<void> {
     if (alias === canonicalWord) return;
 
-    await this.prisma.wordAlias.upsert({
-      where: { alias },
-      create: { alias, canonicalWord },
-      update: { canonicalWord },
-    });
+    try {
+      await this.prisma.wordAlias.upsert({
+        where: { alias },
+        create: { alias, canonicalWord },
+        update: { canonicalWord },
+      });
+    } catch {
+      // Non-critical — ignore duplicate / race errors
+    }
   }
 
+  // ── Cambridge crawl ────────────────────────────────────────────────────────
   private async crawlWord(
     word: string,
   ): Promise<{ meanings: RawMeaning[]; canonicalWord: string } | null> {
@@ -190,42 +215,72 @@ export class CambridgeCrawlerService {
 
     const { response, html } = resolvedPage;
     const $ = cheerio.load(html);
+
     if (
       !$('.pr.dictionary, .entry-body, .di-title, .pr.entry-body__el').length
     ) {
       return null;
     }
 
-    const responseUrlCanonical = this.extractCanonicalFromUrl(response.url);
+    // Canonical word: URL response > DOM headword > fallback to search term
     const canonicalWord =
+      this.extractCanonicalFromUrl(response.url) ||
       $('.hw.dhw').first().text().trim().toLowerCase() ||
       $('.di-title .hw').first().text().trim().toLowerCase() ||
       $('.headword').first().text().trim().toLowerCase() ||
-      responseUrlCanonical ||
       word;
 
     const meaningsByPos: Record<string, RawMeaning[]> = {};
     const seenDefinitions = new Set<string>();
 
-    $('.pr.entry-body__el').each((_, entry) => {
-      const entryNode = $(entry);
-      const partOfSpeech = normalizePos(
-        entryNode.find('.pos, .dpos, .posgram .pos').first().text().trim(),
-      );
-      if (!partOfSpeech) return;
+    // ── Phase 1: structured entry-body__el blocks ──────────────────────────
+    this.scrapeEntryBlocks($, meaningsByPos, seenDefinitions);
 
-      const ukIpa = entryNode
+    // ── Phase 2: fallback for phrasal verbs, idioms, rare words ───────────
+    // Chỉ chạy khi Phase 1 tìm được ít hơn MIN_MEANINGS_PHASE1 meanings
+    const phase1Total = Object.values(meaningsByPos).reduce(
+      (sum, arr) => sum + arr.length,
+      0,
+    );
+
+    if (phase1Total < MIN_MEANINGS_PHASE1) {
+      this.logger.debug(
+        `Phase 1 found ${phase1Total} meanings for "${word}", running Phase 2 fallback`,
+      );
+      this.scrapePosBodies($, meaningsByPos, seenDefinitions);
+    }
+
+    const allMeanings = this.sortAndLimit(meaningsByPos);
+    if (allMeanings.length === 0) return null;
+
+    return { meanings: allMeanings, canonicalWord };
+  }
+
+  // ── Phase 1 scraper ────────────────────────────────────────────────────────
+  private scrapeEntryBlocks(
+    $: cheerio.CheerioAPI,
+    meaningsByPos: Record<string, RawMeaning[]>,
+    seenDefinitions: Set<string>,
+  ): void {
+    $('.pr.entry-body__el').each((_, entry) => {
+      const $entry = $(entry);
+      const pos = normalizePos(
+        $entry.find('.pos, .dpos, .posgram .pos').first().text().trim(),
+      );
+      if (!pos) return;
+
+      const ukIpa = $entry
         .find('.uk .pron .ipa, .uk.dpron .ipa')
         .first()
         .text()
         .trim();
-      const usIpa = entryNode
+      const usIpa = $entry
         .find('.us .pron .ipa, .us.dpron .ipa')
         .first()
         .text()
         .trim();
       const ukAudio = fullAudioUrl(
-        entryNode
+        $entry
           .find(
             '.uk .daud audio source[type="audio/mpeg"], .uk.dpron audio source',
           )
@@ -233,7 +288,7 @@ export class CambridgeCrawlerService {
           .attr('src'),
       );
       const usAudio = fullAudioUrl(
-        entryNode
+        $entry
           .find(
             '.us .daud audio source[type="audio/mpeg"], .us.dpron audio source',
           )
@@ -241,72 +296,144 @@ export class CambridgeCrawlerService {
           .attr('src'),
       );
 
-      if (!meaningsByPos[partOfSpeech]) {
-        meaningsByPos[partOfSpeech] = [];
-      }
+      if (!meaningsByPos[pos]) meaningsByPos[pos] = [];
 
-      entryNode
+      $entry
         .find('.def-block, .ddef_block, .sense-block')
         .each((_, senseBlock) => {
-          const senseNode = $(senseBlock);
-          const rawDefinition = senseNode
-            .find('.def, .ddef_d')
-            .first()
-            .text()
-            .trim();
-          if (!rawDefinition || !isValidDefinition(rawDefinition)) return;
-
-          const definition = cleanText(rawDefinition);
-          for (const seen of seenDefinitions) {
-            if (isSimilar(definition, seen)) return;
-          }
-          seenDefinitions.add(definition);
-
-          const cefrLevel = senseNode
-            .find('.epp-xref, .def-info .epp-xref')
-            .first()
-            .text()
-            .trim();
-
-          const examples: string[] = [];
-          senseNode.find('.examp .eg, .dexamp .deg, .eg').each((_, example) => {
-            if (examples.length >= MAX_EXAMPLES_PER_SENSE) {
-              return false;
-            }
-
-            const text = cleanText($(example).text());
-            if (text.length > 10) {
-              examples.push(text);
-            }
-
-            return;
-          });
-
-          meaningsByPos[partOfSpeech].push({
-            pos: partOfSpeech,
+          const meaning = this.parseSenseBlock(
+            $,
+            senseBlock,
+            pos,
             ukIpa,
             usIpa,
             ukAudio,
             usAudio,
-            definition,
-            cefrLevel,
-            examples,
-          });
+            seenDefinitions,
+          );
+          if (meaning) meaningsByPos[pos].push(meaning);
         });
     });
-
-    const allMeanings = this.sortMeanings(meaningsByPos).slice(
-      0,
-      MAX_MEANINGS_PER_WORD,
-    );
-    if (allMeanings.length === 0) return null;
-
-    return { meanings: allMeanings, canonicalWord };
   }
 
+  // ── Phase 2 fallback scraper ───────────────────────────────────────────────
+  private scrapePosBodies(
+    $: cheerio.CheerioAPI,
+    meaningsByPos: Record<string, RawMeaning[]>,
+    seenDefinitions: Set<string>,
+  ): void {
+    // Global audio/IPA as fallback when pos-body doesn't have its own
+    const globalUkIpa = $('.uk .pron .ipa').first().text().trim();
+    const globalUsIpa =
+      $('.us .pron .ipa').first().text().trim() || globalUkIpa;
+    const globalUkAudio = fullAudioUrl(
+      $('.uk .daud audio source[type="audio/mpeg"]').first().attr('src'),
+    );
+    const globalUsAudio = fullAudioUrl(
+      $('.us .daud audio source[type="audio/mpeg"]').first().attr('src'),
+    );
+
+    $('.pos-body, .pv-body, .idiom-body').each((_, posBody) => {
+      const $posBody = $(posBody);
+
+      const rawPos =
+        $posBody.prevAll('.pos-header, .pos, .dpos-h').first().text().trim() ||
+        $posBody
+          .closest('.entry-body__el, .entry, .di-body')
+          .find('.pos, .dpos')
+          .first()
+          .text()
+          .trim();
+
+      const pos = normalizePos(rawPos) || 'unknown';
+
+      const ukIpa =
+        $posBody.find('.uk .pron .ipa').first().text().trim() || globalUkIpa;
+      const usIpa =
+        $posBody.find('.us .pron .ipa').first().text().trim() || globalUsIpa;
+      const ukAudio =
+        fullAudioUrl(
+          $posBody
+            .find('.uk .daud audio source[type="audio/mpeg"]')
+            .first()
+            .attr('src'),
+        ) || globalUkAudio;
+      const usAudio =
+        fullAudioUrl(
+          $posBody
+            .find('.us .daud audio source[type="audio/mpeg"]')
+            .first()
+            .attr('src'),
+        ) || globalUsAudio;
+
+      if (!meaningsByPos[pos]) meaningsByPos[pos] = [];
+
+      $posBody
+        .find('.def-block, .ddef_block, .sense-block')
+        .each((_, senseBlock) => {
+          const meaning = this.parseSenseBlock(
+            $,
+            senseBlock,
+            pos,
+            ukIpa,
+            usIpa,
+            ukAudio,
+            usAudio,
+            seenDefinitions,
+          );
+          if (meaning) meaningsByPos[pos].push(meaning);
+        });
+    });
+  }
+
+  // ── Shared sense block parser ──────────────────────────────────────────────
+  private parseSenseBlock(
+    $: cheerio.CheerioAPI,
+    senseBlock: Element,
+    pos: string,
+    ukIpa: string,
+    usIpa: string,
+    ukAudio: string,
+    usAudio: string,
+    seenDefinitions: Set<string>,
+  ): RawMeaning | null {
+    const $sense = $(senseBlock);
+
+    const rawDefinition = $sense.find('.def, .ddef_d').first().text().trim();
+    if (!rawDefinition || !isValidDefinition(rawDefinition)) return null;
+
+    const definition = cleanText(rawDefinition);
+
+    // Dedup check
+    for (const seen of seenDefinitions) {
+      if (isSimilar(definition, seen)) return null;
+    }
+    seenDefinitions.add(definition);
+
+    const cefrLevel = $sense
+      .find('.epp-xref, .def-info .epp-xref')
+      .first()
+      .text()
+      .trim();
+
+    const examples: string[] = [];
+    $sense.find('.examp .eg, .dexamp .deg, .eg').each((_, example) => {
+      if (examples.length >= MAX_EXAMPLES_PER_SENSE) return false;
+      const text = cleanText($(example).text());
+      if (text.length > 10) examples.push(text);
+    });
+
+    return { pos, ukIpa, usIpa, ukAudio, usAudio, definition, cefrLevel, examples };
+  }
+
+  // ── URL resolution ─────────────────────────────────────────────────────────
+  // Thử 3 endpoints theo độ ưu tiên:
+  // 1. /search/english/direct/ → Cambridge tự redirect về đúng canonical URL
+  // 2. /dictionary/english/    → direct lookup
+  // 3. /dictionary/english/check?q= → spelling check fallback
   private async resolveCambridgeEntryPage(
     word: string,
-  ): Promise<{ response: Response; html: string } | null> {
+  ): Promise<ResolvedPage | null> {
     const targets = [
       `${CAMBRIDGE_SEARCH_DIRECT_BASE}${encodeURIComponent(word)}`,
       `${CAMBRIDGE_DICTIONARY_BASE}${encodeURIComponent(word)}`,
@@ -314,7 +441,7 @@ export class CambridgeCrawlerService {
     ];
 
     for (const target of targets) {
-      this.logger.log(`Crawling Cambridge for word: ${target}`);
+      this.logger.debug(`Trying: ${target}`);
       try {
         const response = await fetch(target, {
           headers: {
@@ -324,23 +451,22 @@ export class CambridgeCrawlerService {
             Accept:
               'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.9',
+            'Cache-Control': 'no-cache',
           },
           signal: AbortSignal.timeout(25000),
         });
 
-        if (!response.ok) {
-          continue;
-        }
+        if (!response.ok) continue;
 
         const html = await response.text();
         const hasDictionaryMarkup =
           /entry-body__el|class="pr dictionary"|class="di-title"/i.test(html);
-        if (!hasDictionaryMarkup) {
-          continue;
-        }
+
+        if (!hasDictionaryMarkup) continue;
 
         return { response, html };
-      } catch {
+      } catch (error) {
+        this.logger.debug(`Failed for ${target}: ${(error as Error).message}`);
         continue;
       }
     }
@@ -348,6 +474,8 @@ export class CambridgeCrawlerService {
     return null;
   }
 
+  // Đọc canonical word từ URL response sau khi Cambridge redirect
+  // VD: /dictionary/english/run → "run"
   private extractCanonicalFromUrl(url: string): string {
     try {
       const parsedUrl = new URL(url);
@@ -355,11 +483,15 @@ export class CambridgeCrawlerService {
       const index = parsedUrl.pathname.indexOf(marker);
       if (index < 0) return '';
 
-      const pathPart = parsedUrl.pathname.slice(index + marker.length);
       const segment = decodeURIComponent(
-        pathPart.split('/')[0].trim().toLowerCase(),
+        parsedUrl.pathname
+          .slice(index + marker.length)
+          .split('/')[0]
+          .trim()
+          .toLowerCase(),
       );
 
+      // Bỏ qua nếu là các route đặc biệt, không phải entry word
       if (!segment || ['check', 'search', 'direct'].includes(segment)) {
         return '';
       }
@@ -370,26 +502,26 @@ export class CambridgeCrawlerService {
     }
   }
 
-  private sortMeanings(
+  // ── Sorting ────────────────────────────────────────────────────────────────
+  private sortAndLimit(
     meaningsByPos: Record<string, RawMeaning[]>,
   ): RawMeaning[] {
     const sorted: RawMeaning[] = [];
 
-    POS_ORDER.forEach((partOfSpeech) => {
-      if (meaningsByPos[partOfSpeech]) {
-        sorted.push(...meaningsByPos[partOfSpeech]);
-      }
-    });
+    // Các POS phổ biến trước theo POS_ORDER
+    for (const pos of POS_ORDER) {
+      if (meaningsByPos[pos]) sorted.push(...meaningsByPos[pos]);
+    }
 
-    Object.keys(meaningsByPos).forEach((partOfSpeech) => {
-      if (!POS_ORDER.includes(partOfSpeech)) {
-        sorted.push(...meaningsByPos[partOfSpeech]);
-      }
-    });
+    // Các POS còn lại (unknown, interjection, article, v.v.)
+    for (const pos of Object.keys(meaningsByPos)) {
+      if (!POS_ORDER.includes(pos)) sorted.push(...meaningsByPos[pos]);
+    }
 
-    return sorted;
+    return sorted.slice(0, MAX_MEANINGS_PER_WORD);
   }
 
+  // ── Translation ────────────────────────────────────────────────────────────
   private async translateToVi(text: string): Promise<string> {
     try {
       const url = TRANSLATE_API + encodeURIComponent(text);
@@ -419,6 +551,7 @@ export class CambridgeCrawlerService {
     return output;
   }
 
+  // ── Persist ────────────────────────────────────────────────────────────────
   private async saveWord(word: string, meanings: RawMeaning[]): Promise<void> {
     await this.prisma.word.upsert({
       where: { word },
@@ -430,13 +563,14 @@ export class CambridgeCrawlerService {
     if (!wordRow) return;
     const wordId = wordRow.id;
 
+    // Xác định meanings nào đang được user dùng → không được xóa (locked)
     const existingMeanings = await this.prisma.wordMeaning.findMany({
       where: { wordId },
       select: { id: true },
     });
-    const existingIds = existingMeanings.map((meaning) => meaning.id);
-
+    const existingIds = existingMeanings.map((m) => m.id);
     const lockedIds = new Set<number>();
+
     if (existingIds.length > 0) {
       const [userWords, wordListItems, reviewSessionItems] = await Promise.all([
         this.prisma.userWord.findMany({
@@ -460,6 +594,7 @@ export class CambridgeCrawlerService {
       );
     }
 
+    // Xóa meanings cũ không bị lock
     const idsToDelete = existingIds.filter((id) => !lockedIds.has(id));
     if (idsToDelete.length > 0) {
       await this.prisma.wordMeaning.deleteMany({
@@ -467,6 +602,7 @@ export class CambridgeCrawlerService {
       });
     }
 
+    // Insert meanings mới
     await this.prisma.$transaction(
       meanings.map((meaning) =>
         this.prisma.wordMeaning.create({

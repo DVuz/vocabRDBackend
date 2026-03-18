@@ -6,7 +6,8 @@
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
-    "build": "prisma generate && nest build",
+    "sync:sequences": "node -r dotenv/config scripts/sync-sequences.cjs",
+    "build": "npm run sync:sequences && prisma generate && nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
     "start:dev": "nest start --watch",
