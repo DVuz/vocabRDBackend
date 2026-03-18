@@ -15,7 +15,9 @@ async function bootstrap() {
   const allowedOrigins = [
     'http://localhost:5173',      // Local development
     'http://localhost:3000',      // Alternative local port
-    'https://vocab.vtd26.io.vn/login',     // Production frontend URL
+    'https://vocab.vtd26.io.vn',   // Production frontend origin
+    process.env.FRONTEND_URL,
+    process.env.EXTENSION_ORIGIN,
   ].filter(Boolean);
   
   app.enableCors({
