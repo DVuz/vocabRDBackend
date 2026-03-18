@@ -1,0 +1,93 @@
+src/
+├── main.ts                          # Bootstrap app, global pipes/filters/interceptors
+├── app.module.ts                    # Root module, import tất cả feature modules
+│
+├── config/                          # Config typed theo từng domain
+│   ├── app.config.ts
+│   ├── database.config.ts
+│   └── jwt.config.ts
+│
+├── prisma/                          # Prisma client (global module)
+│   ├── prisma.module.ts
+│   └── prisma.service.ts            # extends PrismaClient, onModuleInit/Destroy
+│
+├── common/
+│   ├── guards/
+│   │   ├── jwt-auth.guard.ts        # Bảo vệ route cần login
+│   │   ├── google-oauth.guard.ts    # Trigger Google OAuth flow
+│   │   └── roles.guard.ts           # Kiểm tra role: user/admin/teacher
+│   ├── decorators/
+│   │   ├── current-user.decorator.ts  # Lấy user từ request (@CurrentUser())
+│   │   ├── roles.decorator.ts         # @Roles('admin', 'teacher')
+│   │   └── public.decorator.ts        # @Public() — bypass JWT guard
+│   ├── interceptors/
+│   │   ├── transform-response.interceptor.ts  # Wrap response { data, meta }
+│   │   └── logging.interceptor.ts
+│   ├── filters/
+│   │   ├── http-exception.filter.ts
+│   │   └── prisma-exception.filter.ts  # Xử lý P2002 unique, P2025 not found...
+│   ├── pipes/
+│   │   └── parse-positive-int.pipe.ts
+│   └── types/
+│       ├── jwt-payload.interface.ts    # { sub, email, role }
+│       └── pagination.interface.ts     # { page, limit, total }
+│
+└── modules/
+    ├── auth/
+    │   ├── auth.module.ts
+    │   ├── auth.controller.ts       # GET /auth/google, GET /auth/google/callback, POST /auth/refresh
+    │   ├── auth.service.ts          # validateGoogleUser(), generateTokens(), refreshToken()
+    │   ├── strategies/
+    │   │   ├── google.strategy.ts   # PassportStrategy(Strategy, 'google')
+    │   │   └── jwt.strategy.ts      # PassportStrategy(Strategy, 'jwt')
+    │   └── dto/
+    │       └── auth-response.dto.ts # { accessToken, refreshToken, user }
+    │
+    ├── users/
+    │   ├── users.module.ts
+    │   ├── users.controller.ts      # GET /users/me, PATCH /users/me, GET /users (admin)
+    │   ├── users.service.ts         # findById(), findByGoogleId(), updateProfile()
+    │   └── dto/
+    │       ├── update-user.dto.ts
+    │       └── user-response.dto.ts
+    │
+    ├── words/                       # Quản lý từ điển (Word + WordMeaning + WordAlias)
+    │   ├── words.module.ts
+    │   ├── words.controller.ts      # CRUD /words, /words/:id/meanings, /words/:id/aliases
+    │   ├── words.service.ts
+    │   └── dto/
+    │       ├── create-word.dto.ts
+    │       ├── update-word.dto.ts
+    │       ├── create-word-meaning.dto.ts
+    │       ├── create-word-alias.dto.ts
+    │       └── word-response.dto.ts  # Word với nested meanings + aliases
+    │
+    ├── user-words/                  # Từ vựng cá nhân + SRS data
+    │   ├── user-words.module.ts
+    │   ├── user-words.controller.ts # POST /user-words, GET /user-words, DELETE /user-words/:id
+    │   ├── user-words.service.ts    # addWord(), removeWord(), updateSrsData()
+    │   └── dto/
+    │       ├── add-user-word.dto.ts
+    │       ├── update-srs.dto.ts    # easeFactor, intervalDays, streak, nextReviewAt
+    │       └── user-word-response.dto.ts
+    │
+    ├── word-lists/                  # WordList + WordListItem
+    │   ├── word-lists.module.ts
+    │   ├── word-lists.controller.ts # CRUD /word-lists, POST /word-lists/:id/items
+    │   ├── word-lists.service.ts
+    │   └── dto/
+    │       ├── create-word-list.dto.ts
+    │       ├── update-word-list.dto.ts
+    │       ├── add-word-list-item.dto.ts
+    │       └── word-list-response.dto.ts
+    │
+    └── review/                      # DailyReviewQueue + ReviewSession + ReviewSessionItem
+        ├── review.module.ts
+        ├── review.controller.ts     # POST /review/sessions, PATCH /review/sessions/:id/submit
+        ├── review.service.ts        # createSession(), submitItem(), finalizeSession()
+        ├── daily-queue.service.ts   # buildDailyQueue(), getQueue() — SRS scheduling logic
+        └── dto/
+            ├── create-review-session.dto.ts
+            ├── submit-review-item.dto.ts  # { itemId, isCorrect, responseTime }
+            ├── review-session-response.dto.ts
+            └── daily-queue-response.dto.ts

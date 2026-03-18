@@ -1,0 +1,273 @@
+{
+    "success": true,
+    "data": {
+        "id": 300,
+        "word": "book",
+        "meanings": [
+            {
+                "id": 1954,
+                "partOfSpeech": "noun",
+                "cefrLevel": "C2",
+                "definition": "a number of one type of thing fastened together flat inside a cover:",
+                "vnDefinition": "một số loại vật được gắn chặt với nhau bằng phẳng bên trong một tấm bìa:",
+                "examples": [
+                    "a book of stamps/tickets/matches"
+                ],
+                "ipa": {
+                    "uk": "bʊk",
+                    "us": "bʊk"
+                },
+                "audio": {
+                    "uk": "https://dictionary.cambridge.org/media/english/uk_pron/u/ukb/ukbon/ukbonfi028.mp3",
+                    "us": "https://dictionary.cambridge.org/media/english/us_pron/b/boo/book_/book.mp3"
+                }
+            },
+            {
+                "id": 1951,
+                "partOfSpeech": "noun",
+                "cefrLevel": "A1",
+                "definition": "a written text that can be published in printed or electronic form:",
+                "vnDefinition": "một văn bản bằng văn bản có thể được xuất bản dưới dạng in hoặc điện tử:",
+                "examples": [
+                    "Have you read any good books recently?",
+                    "He has a new book out (= published).",
+                    "She wrote a book on car maintenance."
+                ],
+                "ipa": {
+                    "uk": "bʊk",
+                    "us": "bʊk"
+                },
+                "audio": {
+                    "uk": "https://dictionary.cambridge.org/media/english/uk_pron/u/ukb/ukbon/ukbonfi028.mp3",
+                    "us": "https://dictionary.cambridge.org/media/english/us_pron/b/boo/book_/book.mp3"
+                }
+            },
+            {
+                "id": 1952,
+                "partOfSpeech": "noun",
+                "cefrLevel": "A1",
+                "definition": "a set of pages that have been fastened together inside a cover to be read or written in:",
+                "vnDefinition": "một tập hợp các trang được gắn chặt với nhau bên trong bìa để đọc hoặc viết bằng:",
+                "examples": [
+                    "a hardback/paperback book",
+                    "I took a book with me to read on the plane.",
+                    "He writes all his expenses in a little book he carries with him."
+                ],
+                "ipa": {
+                    "uk": "bʊk",
+                    "us": "bʊk"
+                },
+                "audio": {
+                    "uk": "https://dictionary.cambridge.org/media/english/uk_pron/u/ukb/ukbon/ukbonfi028.mp3",
+                    "us": "https://dictionary.cambridge.org/media/english/us_pron/b/boo/book_/book.mp3"
+                }
+            },
+            {
+                "id": 1953,
+                "partOfSpeech": "noun",
+                "cefrLevel": null,
+                "definition": "one of the parts that a very long book, such as the Bible, is divided into:",
+                "vnDefinition": "một trong những phần mà một cuốn sách rất dài, chẳng hạn như Kinh thánh, được chia thành:",
+                "examples": [
+                    "the book of Job"
+                ],
+                "ipa": {
+                    "uk": "bʊk",
+                    "us": "bʊk"
+                },
+                "audio": {
+                    "uk": "https://dictionary.cambridge.org/media/english/uk_pron/u/ukb/ukbon/ukbonfi028.mp3",
+                    "us": "https://dictionary.cambridge.org/media/english/us_pron/b/boo/book_/book.mp3"
+                }
+            },
+            {
+                "id": 1955,
+                "partOfSpeech": "noun",
+                "cefrLevel": null,
+                "definition": "the written records of money that a business has spent or received:",
+                "vnDefinition": "hồ sơ bằng văn bản về số tiền mà doanh nghiệp đã chi hoặc đã nhận:",
+                "examples": [
+                    "Running a school is much more of a business than it used to be - by law we have to balance our books."
+                ],
+                "ipa": {
+                    "uk": "bʊk",
+                    "us": "bʊk"
+                },
+                "audio": {
+                    "uk": "https://dictionary.cambridge.org/media/english/uk_pron/u/ukb/ukbon/ukbonfi028.mp3",
+                    "us": "https://dictionary.cambridge.org/media/english/us_pron/b/boo/book_/book.mp3"
+                }
+            },
+            {
+                "id": 1956,
+                "partOfSpeech": "noun",
+                "cefrLevel": null,
+                "definition": "the situation in which a bookmaker accepts and pays out amounts of money that are risked on a particular result:",
+                "vnDefinition": "tình huống trong đó nhà cái chấp nhận và trả số tiền có rủi ro cho một kết quả cụ thể:",
+                "examples": [
+                    "They've already opened/started a book on the result of the next World Cup."
+                ],
+                "ipa": {
+                    "uk": "bʊk",
+                    "us": "bʊk"
+                },
+                "audio": {
+                    "uk": "https://dictionary.cambridge.org/media/english/uk_pron/u/ukb/ukbon/ukbonfi028.mp3",
+                    "us": "https://dictionary.cambridge.org/media/english/us_pron/b/boo/book_/book.mp3"
+                }
+            },
+            {
+                "id": 1957,
+                "partOfSpeech": "noun",
+                "cefrLevel": null,
+                "definition": "an object consisting of a number of pages of text or pictures fastened together along one edge and fixed inside two covers:",
+                "vnDefinition": "một vật bao gồm một số trang văn bản hoặc hình ảnh được gắn chặt với nhau dọc theo một cạnh và cố định bên trong hai bìa:",
+                "examples": [
+                    "The artist’s sketch books filled several shelves."
+                ],
+                "ipa": {
+                    "uk": null,
+                    "us": "bʊk"
+                },
+                "audio": {
+                    "uk": null,
+                    "us": "https://dictionary.cambridge.org/media/english/us_pron/b/boo/book_/book.mp3"
+                }
+            },
+            {
+                "id": 1958,
+                "partOfSpeech": "noun",
+                "cefrLevel": null,
+                "definition": "to do something exactly as the rules tells you:",
+                "vnDefinition": "để làm điều gì đó chính xác như các quy tắc yêu cầu bạn:",
+                "examples": [
+                    "My lawyer always goes strictly by the book.",
+                    "This is a private deal - we don't have to do everything by the book."
+                ],
+                "ipa": {
+                    "uk": "bʊk",
+                    "us": null
+                },
+                "audio": {
+                    "uk": "https://dictionary.cambridge.org/media/english/uk_pron/u/ukb/ukbon/ukbonfi028.mp3",
+                    "us": "https://dictionary.cambridge.org/media/english/us_pron/b/boo/book_/book.mp3"
+                }
+            },
+            {
+                "id": 1959,
+                "partOfSpeech": "noun",
+                "cefrLevel": null,
+                "definition": "employed by a company or officially belonging to an organization:",
+                "vnDefinition": "được tuyển dụng bởi một công ty hoặc chính thức thuộc về một tổ chức:",
+                "examples": [
+                    "There are 256 people on the books at the cement works.",
+                    "Carla is on the books of a modelling agency."
+                ],
+                "ipa": {
+                    "uk": "bʊk",
+                    "us": null
+                },
+                "audio": {
+                    "uk": "https://dictionary.cambridge.org/media/english/uk_pron/u/ukb/ukbon/ukbonfi028.mp3",
+                    "us": "https://dictionary.cambridge.org/media/english/us_pron/b/boo/book_/book.mp3"
+                }
+            },
+            {
+                "id": 1960,
+                "partOfSpeech": "verb",
+                "cefrLevel": "A2",
+                "definition": "to arrange to have a seat, room, performer, etc. at a particular time in the future:",
+                "vnDefinition": "sắp xếp để có một chỗ ngồi, phòng, người biểu diễn, vv tại một thời điểm cụ thể trong tương lai:",
+                "examples": [
+                    "I'd like to go but I'm booked up (= I have arranged to do other things) until the weekend.",
+                    "Unfortunately the restaurant was fully booked (= there were no tables available).",
+                    "I've booked us two tickets to see \"Carmen\"/I've booked two tickets for us to see \"Carmen\"."
+                ],
+                "ipa": {
+                    "uk": "bʊk",
+                    "us": "bʊk"
+                },
+                "audio": {
+                    "uk": "https://dictionary.cambridge.org/media/english/uk_pron/u/ukb/ukbon/ukbonfi028.mp3",
+                    "us": "https://dictionary.cambridge.org/media/english/us_pron/b/boo/book_/book.mp3"
+                }
+            },
+            {
+                "id": 1961,
+                "partOfSpeech": "verb",
+                "cefrLevel": null,
+                "definition": "If a police officer, referee, etc. books someone, they write down the person's name in an official record because they have done something wrong:",
+                "vnDefinition": "Nếu cảnh sát, trọng tài, v.v. phạt ai đó, họ ghi tên người đó vào hồ sơ chính thức vì họ đã làm sai điều gì đó:",
+                "examples": [
+                    "A football player who is booked twice in a game is sent off the field.",
+                    "My grandmother was booked for speeding last week."
+                ],
+                "ipa": {
+                    "uk": "bʊk",
+                    "us": "bʊk"
+                },
+                "audio": {
+                    "uk": "https://dictionary.cambridge.org/media/english/uk_pron/u/ukb/ukbon/ukbonfi028.mp3",
+                    "us": "https://dictionary.cambridge.org/media/english/us_pron/b/boo/book_/book.mp3"
+                }
+            },
+            {
+                "id": 1962,
+                "partOfSpeech": "verb",
+                "cefrLevel": null,
+                "definition": "Someone who books a performer arranges a performance:",
+                "vnDefinition": "Ai đó đặt chỗ cho người biểu diễn sắp xếp buổi biểu diễn:",
+                "examples": [
+                    "They booked the Rolling Stones for two concerts in New York."
+                ],
+                "ipa": {
+                    "uk": null,
+                    "us": "bʊk"
+                },
+                "audio": {
+                    "uk": null,
+                    "us": "https://dictionary.cambridge.org/media/english/us_pron/b/boo/book_/book.mp3"
+                }
+            },
+            {
+                "id": 1963,
+                "partOfSpeech": "verb",
+                "cefrLevel": null,
+                "definition": "to officially accuse someone of a crime:",
+                "vnDefinition": "để chính thức buộc tội ai đó về một tội ác:",
+                "examples": [
+                    "Detectives booked him for resisting arrest."
+                ],
+                "ipa": {
+                    "uk": null,
+                    "us": "bʊk"
+                },
+                "audio": {
+                    "uk": null,
+                    "us": "https://dictionary.cambridge.org/media/english/us_pron/b/boo/book_/book.mp3"
+                }
+            },
+            {
+                "id": 1964,
+                "partOfSpeech": "verb",
+                "cefrLevel": null,
+                "definition": "to make a record of something in a company's accounts:",
+                "vnDefinition": "để ghi lại một điều gì đó trong tài khoản của công ty:",
+                "examples": [
+                    "The loss would have been much larger had they not booked an £8m profit from property sales.",
+                    "Jarvis expects to be able to book some or all of that figure in the current year's accounts."
+                ],
+                "ipa": {
+                    "uk": "bʊk",
+                    "us": null
+                },
+                "audio": {
+                    "uk": "https://dictionary.cambridge.org/media/english/uk_pron/u/ukb/ukbon/ukbonfi028.mp3",
+                    "us": "https://dictionary.cambridge.org/media/english/us_pron/b/boo/book_/book.mp3"
+                }
+            }
+        ]
+    },
+    "message": "OK",
+    "statusCode": 200
+}
