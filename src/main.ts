@@ -18,12 +18,31 @@ async function bootstrap() {
     'https://vocab.vtd26.io.vn',   // Production frontend origin
     process.env.FRONTEND_URL,
     process.env.EXTENSION_ORIGIN,
-  ].filter(Boolean);
+  ].filter(Boolean) as string[];
+  
+  const allowedOriginSet = new Set(allowedOrigins.map(origin => origin.trim()));
   
   app.enableCors({
-    origin: allowedOrigins,
+    origin: (origin, callback) => {
+      if (!origin) {
+        callback(null, true);
+        return;
+      }
+
+      if (origin.startsWith('chrome-extension://')) {
+        callback(null, true);
+        return;
+      }
+
+      if (allowedOriginSet.has(origin)) {
+        callback(null, true);
+        return;
+      }
+
+      callback(new Error(`Origin ${origin} not allowed by CORS`), false);
+    },
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
   });
   app.useGlobalFilters(new HttpExceptionFilter());
