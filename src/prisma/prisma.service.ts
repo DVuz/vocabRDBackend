@@ -14,6 +14,7 @@ export class PrismaService
       },
       { schema: 'vocabnew' },
     );
+    console.log("Database URL:", process.env.DATABASE_URL);
     super({ adapter });
   }
 
