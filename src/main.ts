@@ -11,9 +11,18 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   app.use(cookieParser());
   app.setGlobalPrefix('api');
+  
+  const allowedOrigins = [
+    'http://localhost:5173',      // Local development
+    'http://localhost:3000',      // Alternative local port
+    process.env.FRONTEND_URL,     // Production frontend URL
+  ].filter(Boolean);
+  
   app.enableCors({
-    origin: ['http://localhost:5173'],
+    origin: allowedOrigins,
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
   });
   app.useGlobalFilters(new HttpExceptionFilter());
   app.useGlobalInterceptors(new TransformResponseInterceptor(new Reflector()));
