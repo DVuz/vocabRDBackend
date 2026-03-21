@@ -82,7 +82,11 @@ export class ReviewService {
       vnDefinition: meaning.vnDefinition,
       examples: (meaning.examples as string[]) ?? [],
       ipa: { uk: meaning.ukIpa, us: meaning.usIpa },
-      audio: { uk: meaning.ukAudioUrl, us: meaning.usAudioUrl },
+      audio: {
+        tts: meaning.ttsAudioUrl,
+        uk: meaning.ukAudioUrl,
+        us: meaning.usAudioUrl,
+      },
       status: userWord.status ?? UserWordStatus.new,
       currentStreak: userWord.currentStreak,
       intervalDays: userWord.intervalDays,

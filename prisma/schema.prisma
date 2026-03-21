@@ -85,6 +85,12 @@ enum QuestionType {
   @@map("question_type")
 }
 
+enum TtsProvider {
+  elevenlabs
+
+  @@map("tts_provider")
+}
+
 // ─────────────────────────────────────────────
 // MODELS
 // ─────────────────────────────────────────────
@@ -106,6 +112,7 @@ model User {
   dailyReviewQueues DailyReviewQueue[]
   reviewSessions    ReviewSession[]
   refreshTokens     RefreshToken[]
+  ttsConfigs        UserTtsConfig[]
 
   @@map("users")
 }
@@ -151,6 +158,8 @@ model WordMeaning {
   usIpa        String?   @map("us_ipa") @db.VarChar(100)
   ukAudioUrl   String?   @map("uk_audio_url") @db.VarChar(500)
   usAudioUrl   String?   @map("us_audio_url") @db.VarChar(500)
+  ttsAudioUrl  String?   @map("tts_audio_url") @db.VarChar(500)
+  ttsPublicId  String?   @map("tts_public_id") @db.VarChar(255)
   createdAt    DateTime  @default(now()) @map("created_at")
 
   word          Word           @relation(fields: [wordId], references: [id], onUpdate: Cascade, onDelete: Restrict)
@@ -158,6 +167,45 @@ model WordMeaning {
   wordListItems WordListItem[]
 
   @@map("word_meanings")
+}
+
+model UserTtsConfig {
+  id             Int                @id @default(autoincrement())
+  userId         Int?               @map("user_id")
+  name           String             @db.VarChar(100)
+  provider       TtsProvider        @default(elevenlabs)
+  apiKey         String             @map("api_key") @db.VarChar(500)
+  isActive       Boolean            @default(true) @map("is_active")
+  isSystemDefault Boolean           @default(false) @map("is_system_default")
+  ttsFetchCount  Int                @default(0) @map("tts_fetch_count")
+  ttsFetchFailedCount Int           @default(0) @map("tts_fetch_failed_count")
+  remainingCredits Int?             @map("remaining_credits")
+  remainingCreditsMonth String?     @map("remaining_credits_month") @db.VarChar(7)
+  creditsCheckedAt DateTime?        @map("credits_checked_at")
+  createdAt      DateTime           @default(now()) @map("created_at")
+  updatedAt      DateTime           @updatedAt @map("updated_at")
+
+  user       User?              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  voiceModels UserTtsVoiceModel[]
+
+  @@index([userId])
+  @@map("user_tts_configs")
+}
+
+model UserTtsVoiceModel {
+  id          Int      @id @default(autoincrement())
+  configId    Int      @map("config_id")
+  label       String   @db.VarChar(100)
+  voiceId     String   @map("voice_id") @db.VarChar(120)
+  modelId     String   @map("model_id") @db.VarChar(120)
+  isDefault   Boolean  @default(false) @map("is_default")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  config UserTtsConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
+
+  @@index([configId])
+  @@map("user_tts_voice_models")
 }
 
 model UserWord {

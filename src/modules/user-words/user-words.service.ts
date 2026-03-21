@@ -6,10 +6,14 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { SharedTtsAudioService } from './services/shared-tts-audio.service';
 
 @Injectable()
 export class UserWordsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly sharedTtsAudioService: SharedTtsAudioService,
+  ) {}
 
   /**
    * Save a word meaning to the user's list. If the word meaning is already saved, return the existing record.
@@ -47,6 +51,16 @@ export class UserWordsService {
         status: 'new',
       },
     });
+
+    const ttsAudioUrl = meaning.ttsAudioUrl
+      ? meaning.ttsAudioUrl
+      : await this.sharedTtsAudioService.ensureMeaningTtsAudio({
+          userId,
+          meaningId: meaning.id,
+          definition: meaning.definition,
+          ttsAudioUrl: meaning.ttsAudioUrl,
+        });
+
     return {
       userWordId: userWord.id,
       wordId: meaning.wordId,
@@ -55,6 +69,7 @@ export class UserWordsService {
       definition: meaning.definition,
       vnDefinition: meaning.vnDefinition,
       partOfSpeech: meaning.partOfSpeech,
+      audioUrl: ttsAudioUrl,
       addedAt: userWord.addedAt,
     };
   }
@@ -98,7 +113,11 @@ export class UserWordsService {
       cefrLevel: uw.wordMeaning.cefrLevel,
       examples: uw.wordMeaning.examples ?? [],
       ipa: { uk: uw.wordMeaning.ukIpa, us: uw.wordMeaning.usIpa },
-      audio: { uk: uw.wordMeaning.ukAudioUrl, us: uw.wordMeaning.usAudioUrl },
+      audio: {
+        tts: uw.wordMeaning.ttsAudioUrl,
+        uk: uw.wordMeaning.ukAudioUrl,
+        us: uw.wordMeaning.usAudioUrl,
+      },
       status: uw.status,
       isFavorite: uw.isFavorite,
       totalReviews: uw.totalReviews,

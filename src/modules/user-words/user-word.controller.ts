@@ -16,6 +16,7 @@ import {
   ApiBearerAuth,
   ApiOperation,
   ApiParam,
+  ApiQuery,
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
@@ -53,6 +54,9 @@ export class UserWordController {
       'Lấy danh sách từ đã lưu của user đang đăng nhập (lấy userId từ JWT)',
   })
   @ApiResponse({ status: 200, description: 'Lấy danh sách thành công' })
+  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
+  @ApiQuery({ name: 'pageSize', required: false, type: Number, example: 20 })
+  @ApiQuery({ name: 'status', required: false, type: String, example: 'new' })
   @Get()
   @ResponseMessage('Lấy danh sách từ thành công')
   async getUserWords(

@@ -38,6 +38,7 @@ export class WordService {
         examples: unknown;
         ukIpa: string | null;
         usIpa: string | null;
+        ttsAudioUrl: string | null;
         ukAudioUrl: string | null;
         usAudioUrl: string | null;
         createdAt: Date | null;
@@ -68,6 +69,7 @@ export class WordService {
           us: meaning.usIpa,
         },
         audio: {
+          tts: meaning.ttsAudioUrl,
           uk: meaning.ukAudioUrl,
           us: meaning.usAudioUrl,
         },

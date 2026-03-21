@@ -14,6 +14,7 @@ export class WordMeaningResponseDto {
   @ApiProperty({ type: [String] }) examples: string[];
   @ApiProperty({ type: Object }) ipa: { uk: string | null; us: string | null };
   @ApiProperty({ type: Object }) audio: {
+    tts?: string | null;
     uk: string | null;
     us: string | null;
   };

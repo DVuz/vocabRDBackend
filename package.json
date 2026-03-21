@@ -7,6 +7,8 @@
   "license": "UNLICENSED",
   "scripts": {
     "sync:sequences": "node -r dotenv/config scripts/sync-sequences.cjs",
+    "seed:tts": "node -r dotenv/config scripts/seed-tts-configs.cjs",
+    "seed:user-audio": "node -r dotenv/config scripts/seed-user-meanings-audio.cjs",
     "build": "npm run sync:sequences && prisma generate && nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
@@ -22,13 +24,13 @@
   },
   "dependencies": {
     "@nestjs/cli": "^11.0.0",
-    "@nestjs/schematics": "^11.0.0",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.3",
     "@nestjs/core": "^11.0.1",
     "@nestjs/jwt": "^11.0.2",
     "@nestjs/passport": "^11.0.5",
     "@nestjs/platform-express": "^11.0.1",
+    "@nestjs/schematics": "^11.0.0",
     "@nestjs/swagger": "^11.2.6",
     "@prisma/adapter-pg": "^7.5.0",
     "@prisma/client": "^7.5.0",
@@ -38,6 +40,7 @@
     "cheerio": "^1.2.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.4",
+    "cloudinary": "^2.9.0",
     "cookie-parser": "^1.4.7",
     "dotenv": "^17.3.1",
     "google-auth-library": "^10.6.1",
@@ -74,7 +77,11 @@
     "typescript-eslint": "^8.20.0"
   },
   "jest": {
-    "moduleFileExtensions": ["js", "json", "ts"],
+    "moduleFileExtensions": [
+      "js",
+      "json",
+      "ts"
+    ],
     "rootDir": "src",
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
@@ -83,7 +90,9 @@
     "moduleNameMapper": {
       "^src/(.*)$": "<rootDir>/$1"
     },
-    "collectCoverageFrom": ["**/*.(t|j)s"],
+    "collectCoverageFrom": [
+      "**/*.(t|j)s"
+    ],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node"
   }
