@@ -15,6 +15,7 @@ export class WordService {
     const normalizedWord = word.trim().toLowerCase();
     const wordRecord =
       await this.wordLookupService.findWordWithMeanings(normalizedWord);
+      console.log('wordRecord:', wordRecord); // Log the wordRecord for debugging
     if (!wordRecord) {
       this.logger.warn(`Word not found: ${normalizedWord}`);
       throw new NotFoundException(`Word not found: ${normalizedWord}`);
