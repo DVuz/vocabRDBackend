@@ -1,9 +1,11 @@
 import {
+  Body,
   Controller,
   DefaultValuePipe,
   Get,
   Param,
   ParseBoolPipe,
+  Post,
   Query,
 } from '@nestjs/common';
 import { WordService } from './word.service';
@@ -31,5 +33,16 @@ export class WordController {
     includeMeta: boolean,
   ) {
     return await this.wordService.getWordWithMeanings(word, includeMeta);
+  }
+
+  @Post('words/fallback-crawl')
+  async fallbackCrawl(@Body('word') word: string) {
+    const normalizedWord = (word || '').trim().toLowerCase();
+    if (!normalizedWord) {
+      return { ok: false, message: 'Missing word' };
+    }
+
+    const result = await this.wordService.getWordWithMeanings(normalizedWord, false);
+    return { ok: true, word: normalizedWord, data: result };
   }
 }

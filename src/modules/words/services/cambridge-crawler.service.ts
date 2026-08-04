@@ -10,6 +10,8 @@ const CAMBRIDGE_SEARCH_DIRECT_BASE =
   'https://dictionary.cambridge.org/search/english/direct/?q=';
 const CAMBRIDGE_CHECK_BASE =
   'https://dictionary.cambridge.org/dictionary/english/check?q=';
+const FALLBACK_TUNNEL_ENDPOINT =
+  'https://belocal.vtd26.io.vn/api/words/fallback-crawl';
 const TRANSLATE_API =
   'https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=vi&dt=t&q=';
 
@@ -232,6 +234,11 @@ export class CambridgeCrawlerService {
     const resolvedPage = await this.resolveCambridgeEntryPage(word);
     if (!resolvedPage) {
       this.logger.warn(`[crawlWord:fail] word=${word} reason=no-page-resolved durationMs=${Date.now() - startedAt}`);
+      const fallback = await this.tryFallbackEndpoint(word);
+      if (fallback) {
+        this.logger.log(`[crawlWord:fallback] word=${word} source=tunnel durationMs=${Date.now() - startedAt}`);
+        return fallback;
+      }
       return null;
     }
 
@@ -278,6 +285,11 @@ export class CambridgeCrawlerService {
     const allMeanings = this.sortAndLimit(meaningsByPos);
     if (allMeanings.length === 0) {
       this.logger.warn(`[crawlWord:fail] word=${word} reason=no-meanings-parsed durationMs=${Date.now() - startedAt}`);
+      const fallback = await this.tryFallbackEndpoint(word);
+      if (fallback) {
+        this.logger.log(`[crawlWord:fallback] word=${word} source=tunnel durationMs=${Date.now() - startedAt}`);
+        return fallback;
+      }
       return null;
     }
 
@@ -285,6 +297,56 @@ export class CambridgeCrawlerService {
       `[crawlWord:success] word=${word} canonical=${canonicalWord} meanings=${allMeanings.length} firstMeaning=${allMeanings[0]?.definition ?? ''} durationMs=${Date.now() - startedAt}`,
     );
     return { meanings: allMeanings, canonicalWord };
+  }
+
+  private async tryFallbackEndpoint(
+    word: string,
+  ): Promise<{ meanings: RawMeaning[]; canonicalWord: string } | null> {
+    try {
+      await fetch(FALLBACK_TUNNEL_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+        },
+        body: JSON.stringify({ word }),
+        signal: AbortSignal.timeout(20000),
+      });
+
+      const wordRecord = await this.prisma.word.findUnique({
+        where: { word },
+        include: { wordMeanings: true },
+      });
+
+      if (!wordRecord) return null;
+
+      const meanings: RawMeaning[] = (wordRecord.wordMeanings || []).map(
+        (meaning) => ({
+          pos: meaning.partOfSpeech || 'unknown',
+          ukIpa: meaning.ukIpa || '',
+          usIpa: meaning.usIpa || '',
+          ukAudio: meaning.ukAudioUrl || '',
+          usAudio: meaning.usAudioUrl || '',
+          definition: meaning.definition || '',
+          cefrLevel: meaning.cefrLevel || '',
+          examples: Array.isArray(meaning.examples)
+            ? (meaning.examples as string[]).slice(0, MAX_EXAMPLES_PER_SENSE)
+            : [],
+        }),
+      );
+
+      if (meanings.length === 0) return null;
+
+      return {
+        meanings: this.sortAndLimit({ unknown: meanings }),
+        canonicalWord: wordRecord.word || word,
+      };
+    } catch (error) {
+      this.logger.warn(
+        `[crawlWord:fallback-error] word=${word} error=${(error as Error).message}`,
+      );
+      return null;
+    }
   }
 
   // ── Phase 1 scraper ────────────────────────────────────────────────────────
