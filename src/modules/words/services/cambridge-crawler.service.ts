@@ -226,15 +226,24 @@ export class CambridgeCrawlerService {
   private async crawlWord(
     word: string,
   ): Promise<{ meanings: RawMeaning[]; canonicalWord: string } | null> {
+    const startedAt = Date.now();
+    this.logger.log(`[crawlWord:start] word=${word}`);
+
     const resolvedPage = await this.resolveCambridgeEntryPage(word);
-    if (!resolvedPage) return null;
+    if (!resolvedPage) {
+      this.logger.warn(`[crawlWord:fail] word=${word} reason=no-page-resolved durationMs=${Date.now() - startedAt}`);
+      return null;
+    }
 
     const { response, html } = resolvedPage;
+    this.logger.log(`[crawlWord:resolved] word=${word} url=${response.url} status=${response.status} durationMs=${Date.now() - startedAt}`);
+
     const $ = cheerio.load(html);
 
     if (
       !$('.pr.dictionary, .entry-body, .di-title, .pr.entry-body__el').length
     ) {
+      this.logger.warn(`[crawlWord:fail] word=${word} reason=no-dictionary-markup durationMs=${Date.now() - startedAt}`);
       return null;
     }
 
@@ -267,8 +276,12 @@ export class CambridgeCrawlerService {
     }
 
     const allMeanings = this.sortAndLimit(meaningsByPos);
-    if (allMeanings.length === 0) return null;
+    if (allMeanings.length === 0) {
+      this.logger.warn(`[crawlWord:fail] word=${word} reason=no-meanings-parsed durationMs=${Date.now() - startedAt}`);
+      return null;
+    }
 
+    this.logger.log(`[crawlWord:success] word=${word} canonical=${canonicalWord} meanings=${allMeanings.length} durationMs=${Date.now() - startedAt}`);
     return { meanings: allMeanings, canonicalWord };
   }
 

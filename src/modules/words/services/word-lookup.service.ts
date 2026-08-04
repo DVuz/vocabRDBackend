@@ -39,7 +39,9 @@ export class WordLookupService {
       where: { word },
       include: { wordMeanings: true },
     });
+    console.log('crawledWordRecord:', crawledWordRecord); // Log the crawledWordRecord for debugging
     if (crawledWordRecord) return crawledWordRecord;
+    
 
     const crawledAliasRecord = await this.prisma.wordAlias.findUnique({
       where: { alias: word },
