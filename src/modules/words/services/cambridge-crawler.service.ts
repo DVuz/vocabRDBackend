@@ -10,8 +10,6 @@ const CAMBRIDGE_SEARCH_DIRECT_BASE =
   'https://dictionary.cambridge.org/search/english/direct/?q=';
 const CAMBRIDGE_CHECK_BASE =
   'https://dictionary.cambridge.org/dictionary/english/check?q=';
-const FALLBACK_TUNNEL_ENDPOINT =
-  'https://belocal.vtd26.io.vn/api/words/fallback-crawl';
 const TRANSLATE_API =
   'https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=vi&dt=t&q=';
 
@@ -53,6 +51,15 @@ interface RawMeaning {
 interface ResolvedPage {
   response: Response;
   html: string;
+}
+
+interface ScrapperApiResponse {
+  canonicalWord?: string;
+  html?: string;
+  data?: unknown;
+  meanings?: unknown;
+  wordMeanings?: unknown;
+  word?: unknown;
 }
 
 // ─── Pure helpers ─────────────────────────────────────────────────────────────
@@ -158,6 +165,80 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function getNestedValue(value: unknown, path: string[]): unknown {
+  let current: unknown = value;
+
+  for (const segment of path) {
+    if (!isRecord(current)) return undefined;
+    current = current[segment];
+  }
+
+  return current;
+}
+
+function toStringArray(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value
+      .filter((item): item is string => typeof item === 'string')
+      .map((item) => cleanText(item))
+      .filter((item) => item.length > 0)
+      .slice(0, MAX_EXAMPLES_PER_SENSE);
+  }
+
+  if (typeof value === 'string') {
+    const cleaned = cleanText(value);
+    return cleaned ? [cleaned] : [];
+  }
+
+  return [];
+}
+
+function normalizeApiMeaning(value: unknown): RawMeaning | null {
+  if (!isRecord(value)) return null;
+
+  const definition =
+    typeof value.definition === 'string'
+      ? value.definition
+      : typeof value.meaning === 'string'
+        ? value.meaning
+        : typeof value.meaningText === 'string'
+          ? value.meaningText
+          : '';
+
+  if (!definition) return null;
+
+  return {
+    pos: normalizePos(
+      typeof value.pos === 'string'
+        ? value.pos
+        : typeof value.partOfSpeech === 'string'
+          ? value.partOfSpeech
+          : 'unknown',
+    ),
+    ukIpa: typeof value.ukIpa === 'string' ? value.ukIpa : '',
+    usIpa: typeof value.usIpa === 'string' ? value.usIpa : '',
+    ukAudio: typeof value.ukAudio === 'string' ? value.ukAudio : '',
+    usAudio: typeof value.usAudio === 'string' ? value.usAudio : '',
+    definition,
+    cefrLevel: typeof value.cefrLevel === 'string' ? value.cefrLevel : '',
+    examples: toStringArray(value.examples),
+    vnDefinition:
+      typeof value.vnDefinition === 'string' ? value.vnDefinition : undefined,
+  };
+}
+
+function normalizeApiMeanings(value: unknown): RawMeaning[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((item) => normalizeApiMeaning(item))
+    .filter((item): item is RawMeaning => item !== null);
+}
+
 export function looksLikeCambridgeEntryPage(html: string): boolean {
   if (!html || html.length < 200) return false;
 
@@ -234,9 +315,9 @@ export class CambridgeCrawlerService {
     const resolvedPage = await this.resolveCambridgeEntryPage(word);
     if (!resolvedPage) {
       this.logger.warn(`[crawlWord:fail] word=${word} reason=no-page-resolved durationMs=${Date.now() - startedAt}`);
-      const fallback = await this.tryFallbackEndpoint(word);
+      const fallback = await this.tryScrapperApiFallback(word);
       if (fallback) {
-        this.logger.log(`[crawlWord:fallback] word=${word} source=tunnel durationMs=${Date.now() - startedAt}`);
+        this.logger.log(`[crawlWord:fallback] word=${word} source=scrapper-api durationMs=${Date.now() - startedAt}`);
         return fallback;
       }
       return null;
@@ -285,9 +366,9 @@ export class CambridgeCrawlerService {
     const allMeanings = this.sortAndLimit(meaningsByPos);
     if (allMeanings.length === 0) {
       this.logger.warn(`[crawlWord:fail] word=${word} reason=no-meanings-parsed durationMs=${Date.now() - startedAt}`);
-      const fallback = await this.tryFallbackEndpoint(word);
+      const fallback = await this.tryScrapperApiFallback(word);
       if (fallback) {
-        this.logger.log(`[crawlWord:fallback] word=${word} source=tunnel durationMs=${Date.now() - startedAt}`);
+        this.logger.log(`[crawlWord:fallback] word=${word} source=scrapper-api durationMs=${Date.now() - startedAt}`);
         return fallback;
       }
       return null;
@@ -299,54 +380,204 @@ export class CambridgeCrawlerService {
     return { meanings: allMeanings, canonicalWord };
   }
 
-  private async tryFallbackEndpoint(
+  private async tryScrapperApiFallback(
     word: string,
   ): Promise<{ meanings: RawMeaning[]; canonicalWord: string } | null> {
+    const apiUrl =
+      process.env.SCRAPPER_API_URL?.trim() ||
+      process.env.SCRAPER_API_URL?.trim() ||
+      '';
+    const apiKey =
+      process.env.SCRAPPER_API_KEY?.trim() ||
+      process.env.scrapper_api_key?.trim() ||
+      process.env.SCRAPER_API_KEY?.trim() ||
+      '';
+
+    if (!apiUrl) {
+      this.logger.debug(
+        `[crawlWord:fallback-skip] word=${word} reason=no-scrapper-api-url`,
+      );
+      return null;
+    }
+
     try {
-      await fetch(FALLBACK_TUNNEL_ENDPOINT, {
+      const response = await fetch(apiUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+          ...(apiKey
+            ? {
+                'x-api-key': apiKey,
+                Authorization: `Bearer ${apiKey}`,
+              }
+            : {}),
         },
         body: JSON.stringify({ word }),
         signal: AbortSignal.timeout(20000),
       });
 
-      const wordRecord = await this.prisma.word.findUnique({
-        where: { word },
-        include: { wordMeanings: true },
-      });
+      if (!response.ok) {
+        this.logger.warn(
+          `[crawlWord:fallback-error] word=${word} status=${response.status} source=scrapper-api`,
+        );
+        return null;
+      }
 
-      if (!wordRecord) return null;
+      const rawBody = await response.text();
+      const trimmedBody = rawBody.trim();
 
-      const meanings: RawMeaning[] = (wordRecord.wordMeanings || []).map(
-        (meaning) => ({
-          pos: meaning.partOfSpeech || 'unknown',
-          ukIpa: meaning.ukIpa || '',
-          usIpa: meaning.usIpa || '',
-          ukAudio: meaning.ukAudioUrl || '',
-          usAudio: meaning.usAudioUrl || '',
-          definition: meaning.definition || '',
-          cefrLevel: meaning.cefrLevel || '',
-          examples: Array.isArray(meaning.examples)
-            ? (meaning.examples as string[]).slice(0, MAX_EXAMPLES_PER_SENSE)
-            : [],
-        }),
+      if (looksLikeCambridgeEntryPage(trimmedBody)) {
+        const parsedFromHtml = this.parseCambridgeHtml(
+          trimmedBody,
+          word,
+          response.url,
+        );
+        if (parsedFromHtml) return parsedFromHtml;
+      }
+
+      try {
+        const payload = JSON.parse(trimmedBody) as ScrapperApiResponse;
+        const parsedFromJson = this.parseScrapperApiPayload(payload, word);
+        if (parsedFromJson) return parsedFromJson;
+      } catch {
+        // Ignore JSON parse errors and fall through to null.
+      }
+
+      this.logger.warn(
+        `[crawlWord:fallback-error] word=${word} reason=no-usable-scrapper-response source=scrapper-api`,
       );
+      return null;
+    } catch (error) {
+      this.logger.warn(
+        `[crawlWord:fallback-error] word=${word} error=${(error as Error).message} source=scrapper-api`,
+      );
+      return null;
+    }
+  }
 
+  private parseScrapperApiPayload(
+    payload: unknown,
+    fallbackWord: string,
+  ): { meanings: RawMeaning[]; canonicalWord: string } | null {
+    if (Array.isArray(payload)) {
+      const meanings = normalizeApiMeanings(payload);
       if (meanings.length === 0) return null;
 
       return {
         meanings: this.sortAndLimit({ unknown: meanings }),
-        canonicalWord: wordRecord.word || word,
+        canonicalWord: fallbackWord,
       };
-    } catch (error) {
-      this.logger.warn(
-        `[crawlWord:fallback-error] word=${word} error=${(error as Error).message}`,
-      );
+    }
+
+    if (!isRecord(payload)) return null;
+
+    const canonicalWord =
+      this.extractCanonicalWordFromPayload(payload) || fallbackWord;
+
+    const html =
+      this.extractHtmlFromPayload(payload) ||
+      (typeof payload.data === 'string' ? payload.data : '');
+    if (html && looksLikeCambridgeEntryPage(html)) {
+      const parsed = this.parseCambridgeHtml(html, canonicalWord, '');
+      if (parsed) return parsed;
+    }
+
+    const meanings = normalizeApiMeanings(
+      getNestedValue(payload, ['meanings']) ??
+        getNestedValue(payload, ['data', 'meanings']) ??
+        getNestedValue(payload, ['wordMeanings']) ??
+        getNestedValue(payload, ['data', 'wordMeanings']) ??
+        getNestedValue(payload, ['data', 'word', 'wordMeanings']) ??
+        getNestedValue(payload, ['data', 'data', 'wordMeanings']),
+    );
+
+    if (meanings.length === 0) return null;
+
+    return {
+      meanings: this.sortAndLimit({ unknown: meanings }),
+      canonicalWord,
+    };
+  }
+
+  private extractCanonicalWordFromPayload(payload: unknown): string {
+    if (!isRecord(payload)) return '';
+
+    const candidates = [
+      payload.canonicalWord,
+      getNestedValue(payload, ['data', 'canonicalWord']),
+      getNestedValue(payload, ['word']),
+      getNestedValue(payload, ['data', 'word']),
+      getNestedValue(payload, ['data', 'word', 'word']),
+      getNestedValue(payload, ['data', 'data', 'word']),
+    ];
+
+    for (const candidate of candidates) {
+      if (typeof candidate === 'string' && candidate.trim()) {
+        return candidate.trim().toLowerCase();
+      }
+    }
+
+    return '';
+  }
+
+  private extractHtmlFromPayload(payload: unknown): string {
+    if (!isRecord(payload)) return '';
+
+    const candidates = [
+      payload.html,
+      getNestedValue(payload, ['data', 'html']),
+      getNestedValue(payload, ['data', 'data', 'html']),
+    ];
+
+    for (const candidate of candidates) {
+      if (typeof candidate === 'string' && candidate.trim()) {
+        return candidate.trim();
+      }
+    }
+
+    return '';
+  }
+
+  private parseCambridgeHtml(
+    html: string,
+    fallbackWord: string,
+    responseUrl: string,
+  ): { meanings: RawMeaning[]; canonicalWord: string } | null {
+    const $ = cheerio.load(html);
+
+    if (!$('.pr.dictionary, .entry-body, .di-title, .pr.entry-body__el').length) {
       return null;
     }
+
+    const canonicalWord =
+      this.extractCanonicalFromUrl(responseUrl) ||
+      $('.hw.dhw').first().text().trim().toLowerCase() ||
+      $('.di-title .hw').first().text().trim().toLowerCase() ||
+      $('.headword').first().text().trim().toLowerCase() ||
+      fallbackWord;
+
+    const meaningsByPos: Record<string, RawMeaning[]> = {};
+    const seenDefinitions = new Set<string>();
+
+    this.scrapeEntryBlocks($, meaningsByPos, seenDefinitions);
+
+    const phase1Total = Object.values(meaningsByPos).reduce(
+      (sum, arr) => sum + arr.length,
+      0,
+    );
+
+    if (phase1Total < MIN_MEANINGS_PHASE1) {
+      this.logger.debug(
+        `Phase 1 found ${phase1Total} meanings for "${fallbackWord}", running Phase 2 fallback`,
+      );
+      this.scrapePosBodies($, meaningsByPos, seenDefinitions);
+    }
+
+    const allMeanings = this.sortAndLimit(meaningsByPos);
+    if (allMeanings.length === 0) return null;
+
+    return { meanings: allMeanings, canonicalWord };
   }
 
   // ── Phase 1 scraper ────────────────────────────────────────────────────────
