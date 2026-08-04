@@ -156,6 +156,22 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+export function looksLikeCambridgeEntryPage(html: string): boolean {
+  if (!html || html.length < 200) return false;
+
+  const normalized = html.toLowerCase();
+  const hasEntryMarkers =
+    /entry-body__el|class="pr dictionary"|class="di-title"|class="headword"|class="hw"/i.test(
+      html,
+    ) || /def-block|ddef_d|sense-block|pron|headword/i.test(normalized);
+  const hasDictionarySignals =
+    /dictionary\.cambridge\.org|cambridge dictionary|english meaning/i.test(
+      normalized,
+    );
+
+  return hasDictionarySignals && hasEntryMarkers;
+}
+
 // ─── Service ──────────────────────────────────────────────────────────────────
 @Injectable()
 export class CambridgeCrawlerService {
@@ -441,33 +457,46 @@ export class CambridgeCrawlerService {
     ];
 
     for (const target of targets) {
-      this.logger.debug(`Trying: ${target}`);
-      try {
-        const response = await fetch(target, {
-          headers: {
-            'User-Agent':
-              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-              '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            Accept:
-              'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Cache-Control': 'no-cache',
-          },
-          signal: AbortSignal.timeout(25000),
-        });
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        this.logger.debug(`Trying: ${target} (attempt ${attempt}/3)`);
+        try {
+          const response = await fetch(target, {
+            headers: {
+              'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+                '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+              Accept:
+                'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+              'Accept-Language': 'en-US,en;q=0.9',
+              'Cache-Control': 'no-cache',
+            },
+            signal: AbortSignal.timeout(25000),
+          });
 
-        if (!response.ok) continue;
+          if (!response.ok) {
+            if (attempt < 3) {
+              await sleep(800 * attempt);
+              continue;
+            }
+            continue;
+          }
 
-        const html = await response.text();
-        const hasDictionaryMarkup =
-          /entry-body__el|class="pr dictionary"|class="di-title"/i.test(html);
+          const html = await response.text();
+          if (!looksLikeCambridgeEntryPage(html)) {
+            if (attempt < 3) {
+              await sleep(800 * attempt);
+              continue;
+            }
+            continue;
+          }
 
-        if (!hasDictionaryMarkup) continue;
-
-        return { response, html };
-      } catch (error) {
-        this.logger.debug(`Failed for ${target}: ${(error as Error).message}`);
-        continue;
+          return { response, html };
+        } catch (error) {
+          this.logger.debug(`Failed for ${target}: ${(error as Error).message}`);
+          if (attempt < 3) {
+            await sleep(800 * attempt);
+          }
+        }
       }
     }
 
