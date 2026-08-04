@@ -489,10 +489,8 @@ export class CambridgeCrawlerService {
           });
 
           if (!response.ok) {
-            if (attempt < 3) {
-              await sleep(800 * attempt);
-              continue;
-            }
+            this.logger.debug(`Non-OK response: ${target} status=${response.status}`);
+            if (attempt < 3) { await sleep(800 * attempt); continue; }
             continue;
           }
 
