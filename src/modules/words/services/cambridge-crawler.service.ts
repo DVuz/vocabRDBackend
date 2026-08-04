@@ -281,7 +281,9 @@ export class CambridgeCrawlerService {
       return null;
     }
 
-    this.logger.log(`[crawlWord:success] word=${word} canonical=${canonicalWord} meanings=${allMeanings.length} durationMs=${Date.now() - startedAt}`);
+    this.logger.log(
+      `[crawlWord:success] word=${word} canonical=${canonicalWord} meanings=${allMeanings.length} firstMeaning=${allMeanings[0]?.definition ?? ''} durationMs=${Date.now() - startedAt}`,
+    );
     return { meanings: allMeanings, canonicalWord };
   }
 
@@ -495,6 +497,11 @@ export class CambridgeCrawlerService {
           }
 
           const html = await response.text();
+          const snippet = html.replace(/\s+/g, ' ').slice(0, 400);
+          this.logger.debug(
+            `[crawlWord:response] target=${target} attempt=${attempt} status=${response.status} url=${response.url} snippet=${snippet}`,
+          );
+
           if (!looksLikeCambridgeEntryPage(html)) {
             if (attempt < 3) {
               await sleep(800 * attempt);
