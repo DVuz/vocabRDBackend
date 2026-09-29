@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { CambridgeCrawlerService } from './cambridge-crawler.service';
+import { LongmanCrawlerService } from './longman-crawler.service';
 
 /**
  * Service for looking up words and their meanings from the database.
@@ -10,10 +10,10 @@ import { CambridgeCrawlerService } from './cambridge-crawler.service';
 export class WordLookupService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly cambridgeCrawlerService: CambridgeCrawlerService,
+    private readonly longmanCrawlerService: LongmanCrawlerService,
   ) {}
 
-  async findWordWithMeanings(word: string) {
+  async findWordWithMeanings(word: string, allowCrawl = true) {
     const wordRecord = await this.prisma.word.findUnique({
       where: { word },
       include: { wordMeanings: true },
@@ -33,15 +33,15 @@ export class WordLookupService {
       });
     }
 
-    await this.cambridgeCrawlerService.crawlAndSave(word);
+    if (!allowCrawl) return null;
+
+    await this.longmanCrawlerService.crawlAndSave(word);
 
     const crawledWordRecord = await this.prisma.word.findUnique({
       where: { word },
       include: { wordMeanings: true },
     });
-    console.log('crawledWordRecord:', crawledWordRecord); // Log the crawledWordRecord for debugging
     if (crawledWordRecord) return crawledWordRecord;
-    
 
     const crawledAliasRecord = await this.prisma.wordAlias.findUnique({
       where: { alias: word },

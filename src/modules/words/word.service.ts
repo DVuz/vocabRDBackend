@@ -11,11 +11,15 @@ export class WordService {
   async getWordWithMeanings(
     word: string,
     includeMeta = false,
+    allowCrawl = true,
   ): Promise<WordResponseDto> {
     const normalizedWord = word.trim().toLowerCase();
     const wordRecord =
-      await this.wordLookupService.findWordWithMeanings(normalizedWord);
-      console.log('wordRecord:', wordRecord); // Log the wordRecord for debugging
+      await this.wordLookupService.findWordWithMeanings(
+        normalizedWord,
+        allowCrawl,
+      );
+    console.log('wordRecord:', wordRecord); // Log the wordRecord for debugging
     if (!wordRecord) {
       this.logger.warn(`Word not found: ${normalizedWord}`);
       throw new NotFoundException(`Word not found: ${normalizedWord}`);
@@ -30,6 +34,10 @@ export class WordService {
       word: string;
       createdAt: Date | null;
       updatedAt: Date | null;
+      ukIpa: string | null;
+      usIpa: string | null;
+      ukAudioUrl: string | null;
+      usAudioUrl: string | null;
       wordMeanings: Array<{
         id: number;
         partOfSpeech: string | null;
@@ -37,11 +45,7 @@ export class WordService {
         definition: string;
         vnDefinition: string;
         examples: unknown;
-        ukIpa: string | null;
-        usIpa: string | null;
         ttsAudioUrl: string | null;
-        ukAudioUrl: string | null;
-        usAudioUrl: string | null;
         createdAt: Date | null;
       }>;
     },
@@ -66,13 +70,13 @@ export class WordService {
         vnDefinition: meaning.vnDefinition,
         examples: this.toExamplesArray(meaning.examples),
         ipa: {
-          uk: meaning.ukIpa,
-          us: meaning.usIpa,
+          uk: wordRecord.ukIpa,
+          us: wordRecord.usIpa,
         },
         audio: {
           tts: meaning.ttsAudioUrl,
-          uk: meaning.ukAudioUrl,
-          us: meaning.usAudioUrl,
+          uk: wordRecord.ukAudioUrl,
+          us: wordRecord.usAudioUrl,
         },
         ...(includeMeta
           ? {

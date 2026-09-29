@@ -136,10 +136,14 @@ model RefreshToken {
 }
 
 model Word {
-  id        Int       @id @default(autoincrement())
-  word      String    @unique @db.VarChar(100)
-  createdAt    DateTime  @default(now()) @map("created_at")
-  updatedAt    DateTime  @updatedAt @map("updated_at")
+  id         Int      @id @default(autoincrement())
+  word       String   @unique @db.VarChar(100)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamp(3)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamp(3)
+  ukIpa      String?  @map("uk_ipa") @db.VarChar(100)
+  usIpa      String?  @map("us_ipa") @db.VarChar(100)
+  ukAudioUrl String?  @map("uk_audio_url") @db.VarChar(500)
+  usAudioUrl String?  @map("us_audio_url") @db.VarChar(500)
 
   wordMeanings WordMeaning[]
 
@@ -154,10 +158,6 @@ model WordMeaning {
   partOfSpeech String?   @map("part_of_speech") @db.VarChar(50)
   examples     Json?
   cefrLevel    String?   @map("cefr_level") @db.VarChar(10)
-  ukIpa        String?   @map("uk_ipa") @db.VarChar(100)
-  usIpa        String?   @map("us_ipa") @db.VarChar(100)
-  ukAudioUrl   String?   @map("uk_audio_url") @db.VarChar(500)
-  usAudioUrl   String?   @map("us_audio_url") @db.VarChar(500)
   ttsAudioUrl  String?   @map("tts_audio_url") @db.VarChar(500)
   ttsPublicId  String?   @map("tts_public_id") @db.VarChar(255)
   createdAt    DateTime  @default(now()) @map("created_at")

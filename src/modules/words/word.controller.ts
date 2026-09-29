@@ -42,7 +42,11 @@ export class WordController {
       return { ok: false, message: 'Missing word' };
     }
 
-    const result = await this.wordService.getWordWithMeanings(normalizedWord, false);
+    const result = await this.wordService.getWordWithMeanings(
+      normalizedWord,
+      false,
+      false,
+    );
     return { ok: true, word: normalizedWord, data: result };
   }
 }

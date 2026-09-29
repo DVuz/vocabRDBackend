@@ -20,6 +20,6 @@ function withSchema(url: string | undefined, schema: string): string | undefined
 export default defineConfig({
   schema: path.join(__dirname, 'prisma/schema.prisma'),
   datasource: {
-    url: withSchema(process.env.DIRECT_URL ?? process.env.DATABASE_URL, 'vocabnew'),
+    url: withSchema(process.env.DIRECT_URL ?? process.env.DATABASE_URL, 'vocabd1'),
   },
 });

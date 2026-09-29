@@ -1,0 +1,780 @@
+import { Injectable, Logger } from '@nestjs/common';
+import {
+  HeadObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3';
+import * as cheerio from 'cheerio';
+import type { Element } from 'domhandler';
+import { PrismaService } from 'src/prisma/prisma.service';
+
+/**
+ * Crawl dữ liệu từ Longman (https://www.ldoceonline.com):
+ *   - Lấy nghĩa, ví dụ (→ WordMeaning) và IPA + audio UK/US (→ Word)
+ *   - Dịch definition sang tiếng Việt (Google gtx)
+ *   - Tải audio → upload lên Supabase Storage (S3) → lưu URL public vào DB
+ *   - Từ đã crawl rồi (đã có Word + WordMeaning, hoặc đã có alias) thì bỏ qua
+ *
+ * ENV:
+ *   DISABLE_LONGMAN=true        → bỏ qua Longman
+ *   LONGMAN_DELAY_MS=500        → nghỉ giữa các request tới Longman
+ *   S3_ENDPOINT, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY (bắt buộc để upload audio)
+ *   S3_BUCKET=vocab, S3_REGION=ap-southeast-1
+ *   PUBLIC_BASE_URL             → mặc định suy ra từ S3_ENDPOINT (giống script migrate-audio)
+ *   Nếu thiếu cấu hình S3 → giữ nguyên URL audio gốc của Longman.
+ */
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+const LONGMAN_BASE = 'https://www.ldoceonline.com';
+const LONGMAN_ENTRY_URL = `${LONGMAN_BASE}/dictionary/`;
+const LONGMAN_SEARCH_URL = `${LONGMAN_BASE}/search/english/direct/?q=`;
+const TRANSLATE_API =
+  'https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=vi&dt=t&q=';
+
+const BROWSER_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+  '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
+const MAX_EXAMPLES_PER_SENSE = 3;
+const MAX_MEANINGS_PER_WORD = 15;
+const TRANSLATE_BATCH_SIZE = 4;
+const TRANSLATE_BATCH_DELAY_MS = 200;
+const BLOCK_COOLDOWN_MS = 10 * 60 * 1000;
+const NOT_FOUND_TTL_MS = 60 * 60 * 1000; // không crawl lại từ không tồn tại trong 1 giờ
+
+const POS_ORDER = [
+  'noun',
+  'verb',
+  'adjective',
+  'adverb',
+  'preposition',
+  'conjunction',
+  'pronoun',
+  'determiner',
+  'modal verb',
+  'number',
+  'exclamation',
+  'interjection',
+  'prefix',
+  'suffix',
+  'abbreviation',
+];
+
+const CONTENT_TYPES: Record<string, string> = {
+  mp3: 'audio/mpeg',
+  ogg: 'audio/ogg',
+  wav: 'audio/wav',
+  m4a: 'audio/mp4',
+};
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+interface RawMeaning {
+  pos: string;
+  definition: string;
+  cefrLevel: string;
+  examples: string[];
+  vnDefinition?: string;
+}
+
+interface Pron {
+  ukIpa: string;
+  usIpa: string;
+  ukAudio: string;
+  usAudio: string;
+}
+
+interface ParsedEntry {
+  canonicalWord: string;
+  pron: Pron; // IPA + audio ở cấp Word (schema mới không lưu ở WordMeaning)
+  meanings: RawMeaning[];
+}
+
+interface FetchedPage {
+  html: string;
+  url: string;
+}
+
+class BlockedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'BlockedError';
+  }
+}
+
+// ─── Pure helpers ─────────────────────────────────────────────────────────────
+function cleanText(text: string): string {
+  return text
+    .replace(/→\s*/g, '')
+    .replace(/\s+/g, ' ')
+    .replace(/^\s*[-•→►]\s*/, '')
+    .replace(/^\s*\d+\.\s*/, '')
+    .replace(/\s*\|\s*/g, ' ')
+    .trim();
+}
+
+function cleanDefinition(text: string): string {
+  return cleanText(text).replace(/\s*[:;]\s*$/, '').trim();
+}
+
+function isValidDefinition(def: string): boolean {
+  const cleaned = cleanText(def);
+  if (cleaned.length < 5) return false;
+  if (!/[a-zA-Z]/.test(cleaned)) return false;
+  return ![/^see also/i, /^compare/i, /^opposite/i, /^related/i].some((p) =>
+    p.test(cleaned),
+  );
+}
+
+function normalizePos(raw: string): string {
+  const cleaned = raw
+    .replace(/[^\w\s]/g, '')
+    .trim()
+    .toLowerCase();
+  const mapping: Record<string, string> = {
+    n: 'noun',
+    v: 'verb',
+    adj: 'adjective',
+    adv: 'adverb',
+    prep: 'preposition',
+    conj: 'conjunction',
+    pron: 'pronoun',
+    interj: 'interjection',
+    det: 'determiner',
+    art: 'article',
+  };
+  return mapping[cleaned] ?? cleaned;
+}
+
+function normalizeDef(value: string): string {
+  return cleanText(value)
+    .toLowerCase()
+    .replace(/[^\w\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isSimilar(defA: string, defB: string): boolean {
+  const a = normalizeDef(defA);
+  const b = normalizeDef(defB);
+  if (a === b) return true;
+
+  const [longer, shorter] = a.length > b.length ? [a, b] : [b, a];
+  if (longer.includes(shorter) && shorter.length / longer.length > 0.7) {
+    return true;
+  }
+
+  const wordsA = a.split(' ').filter((w) => w.length > 3);
+  const wordsB = b.split(' ').filter((w) => w.length > 3);
+  if (wordsA.length > 3 && wordsB.length > 3) {
+    const common = wordsA.filter((w) => wordsB.includes(w));
+    if (common.length / Math.min(wordsA.length, wordsB.length) > 0.6) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function longmanUrl(src: string | undefined): string {
+  if (!src) return '';
+  if (src.startsWith('http')) return src;
+  if (src.startsWith('//')) return `https:${src}`;
+  return `${LONGMAN_BASE}${src.startsWith('/') ? '' : '/'}${src}`;
+}
+
+function slugify(word: string): string {
+  return (
+    word
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'unknown'
+  );
+}
+
+function buildAudioKey(accent: string, word: string, ext: string, suffix = ''): string {
+  const slug = slugify(word);
+  const letter = /^[a-z]/.test(slug) ? slug[0] : '0-9';
+  return `${accent}/${letter}/${slug}${suffix ? `-${slugify(suffix)}` : ''}.${ext}`;
+}
+
+function getExt(url: string): string {
+  try {
+    const m = new URL(url).pathname.match(/\.(mp3|ogg|wav|m4a)$/i);
+    return m ? m[1].toLowerCase() : 'mp3';
+  } catch {
+    return 'mp3';
+  }
+}
+
+// ─── Service ──────────────────────────────────────────────────────────────────
+@Injectable()
+export class LongmanCrawlerService {
+  private readonly logger = new Logger(LongmanCrawlerService.name);
+
+  /** Tránh crawl trùng khi nhiều request cùng tra một từ */
+  private readonly inflight = new Map<
+    string,
+    Promise<{ canonicalWord: string } | null>
+  >();
+
+  /** Các từ Longman không có → không thử lại liên tục */
+  private readonly notFound = new Map<string, number>();
+
+  /** Request tới Longman chạy lần lượt + nghỉ giữa các lượt */
+  private queue: Promise<unknown> = Promise.resolve();
+
+  /** Circuit breaker */
+  private blockedUntil = 0;
+
+  private s3: S3Client | null | undefined;
+
+  constructor(private readonly prisma: PrismaService) {}
+
+  /** Số ms còn lại của circuit breaker (0 = không bị chặn). Dùng cho script crawl hàng loạt. */
+  getBlockedRemainingMs(): number {
+    return Math.max(0, this.blockedUntil - Date.now());
+  }
+
+  // ── Public entry point ─────────────────────────────────────────────────────
+  async crawlAndSave(
+    searchWord: string,
+  ): Promise<{ canonicalWord: string } | null> {
+    const word = searchWord.trim().toLowerCase().replace(/\s+/g, ' ');
+
+    if (!word || word.length > 100 || !/^[a-z][a-z\s'\-.]*$/.test(word)) {
+      this.logger.warn(`Invalid word skipped: "${searchWord}"`);
+      return null;
+    }
+
+    const existing = this.inflight.get(word);
+    if (existing) return existing;
+
+    const task = this.doCrawlAndSave(word).finally(() =>
+      this.inflight.delete(word),
+    );
+    this.inflight.set(word, task);
+    return task;
+  }
+
+  private async doCrawlAndSave(
+    word: string,
+  ): Promise<{ canonicalWord: string } | null> {
+    const startedAt = Date.now();
+
+    // 1. Đã crawl rồi → thôi
+    const done = await this.findAlreadyCrawled(word);
+    if (done) {
+      this.logger.debug(`[crawl:skip] "${word}" already in DB`);
+      return done;
+    }
+
+    const notFoundAt = this.notFound.get(word);
+    if (notFoundAt && Date.now() - notFoundAt < NOT_FOUND_TTL_MS) return null;
+
+    if (process.env.DISABLE_LONGMAN === 'true') return null;
+    if (Date.now() < this.blockedUntil) {
+      this.logger.debug('[longman] circuit open, skipping');
+      return null;
+    }
+
+    // 2. Crawl Longman
+    let entry: ParsedEntry | null = null;
+    try {
+      entry = await this.fetchFromLongman(word);
+    } catch (error) {
+      if (error instanceof BlockedError) {
+        this.blockedUntil = Date.now() + BLOCK_COOLDOWN_MS;
+        this.logger.warn(
+          `[longman] blocked (${error.message}) → pause ${BLOCK_COOLDOWN_MS / 60000} min`,
+        );
+      } else {
+        this.logger.warn(`[longman] error for "${word}": ${(error as Error).message}`);
+      }
+      return null;
+    }
+
+    if (!entry) {
+      this.notFound.set(word, Date.now());
+      this.logger.warn(`"${word}" not found on Longman`);
+      return null;
+    }
+
+    const { canonicalWord, pron, meanings } = entry;
+
+    // 3. Từ gốc (canonical) đã có trong DB → chỉ lưu alias
+    if (canonicalWord !== word && (await this.hasMeanings(canonicalWord))) {
+      await this.saveAlias(word, canonicalWord);
+      this.logger.log(`Alias saved (canonical existed): "${word}" → "${canonicalWord}"`);
+      return { canonicalWord };
+    }
+
+    // 4. Dịch + upload audio + lưu DB
+    const translated = await this.translateAll(meanings);
+    const finalPron = await this.migrateAudio(canonicalWord, pron);
+
+    await this.saveWord(canonicalWord, finalPron, translated);
+
+    if (canonicalWord !== word) {
+      await this.saveAlias(word, canonicalWord);
+      this.logger.log(`Alias saved: "${word}" → "${canonicalWord}"`);
+    }
+
+    this.logger.log(
+      `[crawl:done] word=${word} canonical=${canonicalWord} source=longman meanings=${translated.length} durationMs=${Date.now() - startedAt}`,
+    );
+    return { canonicalWord };
+  }
+
+  // ── Kiểm tra đã crawl ──────────────────────────────────────────────────────
+  private async hasMeanings(word: string): Promise<boolean> {
+    const row = await this.prisma.word.findUnique({
+      where: { word },
+      select: { _count: { select: { wordMeanings: true } } },
+    });
+    return !!row && row._count.wordMeanings > 0;
+  }
+
+  private async findAlreadyCrawled(
+    word: string,
+  ): Promise<{ canonicalWord: string } | null> {
+    if (await this.hasMeanings(word)) return { canonicalWord: word };
+
+    const alias = await this.prisma.wordAlias.findUnique({ where: { alias: word } });
+    if (alias && (await this.hasMeanings(alias.canonicalWord))) {
+      return { canonicalWord: alias.canonicalWord };
+    }
+    return null;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // LONGMAN FETCH + PARSE
+  // ═══════════════════════════════════════════════════════════════════════════
+  private async fetchFromLongman(word: string): Promise<ParsedEntry | null> {
+    const slug = encodeURIComponent(word.replace(/\s+/g, '-'));
+    const targets = [
+      `${LONGMAN_ENTRY_URL}${slug}`,
+      `${LONGMAN_SEARCH_URL}${encodeURIComponent(word)}`, // dạng biến thể: went, sizes...
+    ];
+
+    for (const target of targets) {
+      const page = await this.fetchPage(target);
+      if (!page) continue;
+
+      const parsed = this.parseLongman(page, word);
+      if (parsed) return parsed;
+
+      // Trang kết quả tìm kiếm → theo link kết quả đầu tiên (1 lần)
+      const next = this.findFirstResultLink(page.html, word);
+      if (next) {
+        const nextPage = await this.fetchPage(next);
+        const nextParsed = nextPage ? this.parseLongman(nextPage, word) : null;
+        if (nextParsed) return nextParsed;
+      }
+    }
+    return null;
+  }
+
+  /** Chạy tuần tự, nghỉ giữa các request để không bị chặn */
+  private fetchPage(url: string): Promise<FetchedPage | null> {
+    const run = this.queue.then(async () => {
+      try {
+        return await this.doFetch(url);
+      } finally {
+        await sleep(Number(process.env.LONGMAN_DELAY_MS ?? 500));
+      }
+    });
+    this.queue = run.catch(() => undefined);
+    return run;
+  }
+
+  private async doFetch(url: string): Promise<FetchedPage | null> {
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': BROWSER_UA,
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(20000),
+    });
+
+    if ([403, 429, 503].includes(response.status)) {
+      throw new BlockedError(`HTTP ${response.status}`);
+    }
+    if (!response.ok) return null; // 404...
+
+    return { html: await response.text(), url: response.url };
+  }
+
+  private findFirstResultLink(html: string, word: string): string {
+    const $ = cheerio.load(html);
+    const hrefs = $(
+      '.search_results a[href*="/dictionary/"], .didyoumean a[href*="/dictionary/"], ul.results a[href*="/dictionary/"]',
+    )
+      .map((_, a) => $(a).attr('href') ?? '')
+      .get()
+      .filter(Boolean);
+    if (hrefs.length === 0) return '';
+
+    // Ưu tiên link khớp đúng từ tìm kiếm, nếu không lấy link đầu
+    const exact = hrefs.find((h) => this.slugFromPath(h) === word.replace(/\s+/g, ' '));
+    return longmanUrl(exact ?? hrefs[0]);
+  }
+
+  /** /dictionary/go_1 → "go" ; /dictionary/ice-cream → "ice cream" */
+  private slugFromPath(pathOrUrl: string): string {
+    try {
+      const pathname = pathOrUrl.startsWith('http')
+        ? new URL(pathOrUrl).pathname
+        : pathOrUrl.split('?')[0];
+      const marker = '/dictionary/';
+      const index = pathname.indexOf(marker);
+      if (index < 0) return '';
+
+      const segment = decodeURIComponent(
+        pathname.slice(index + marker.length).split('/')[0].trim().toLowerCase(),
+      );
+      if (!segment) return '';
+      return segment.replace(/_\d+$/, '').replace(/-/g, ' ');
+    } catch {
+      return '';
+    }
+  }
+
+  private parseLongman(page: FetchedPage, word: string): ParsedEntry | null {
+    const $ = cheerio.load(page.html);
+
+    const $entries = $('.ldoceEntry.Entry');
+    if (!$entries.length) return null;
+
+    const canonicalWord =
+      this.slugFromPath($('link[rel="canonical"]').attr('href') ?? '') ||
+      this.slugFromPath(page.url) ||
+      $entries.first().find('.Head .HWD').first().text().trim().toLowerCase() ||
+      word;
+
+    const byPos: Record<string, RawMeaning[]> = {};
+    const seen = new Set<string>();
+    const wordPron: Pron = { ukIpa: '', usIpa: '', ukAudio: '', usAudio: '' };
+
+    $entries.each((_, entryEl) => {
+      const $entry = $(entryEl);
+      const pos = normalizePos($entry.find('.Head .POS').first().text()) || 'unknown';
+
+      // Pron của Word: lấy giá trị đầu tiên có dữ liệu qua các entry
+      const pron = this.readPron($, $entry);
+      for (const key of Object.keys(wordPron) as (keyof Pron)[]) {
+        if (!wordPron[key] && pron[key]) wordPron[key] = pron[key];
+      }
+
+      $entry.find('.Sense, .Subsense').each((__, senseEl) => {
+        const $sense = $(senseEl);
+
+        // Bỏ nghĩa nằm trong phrasal verb / phrase / collocation box
+        if ($sense.closest('.PhrVbEntry, .Phrase, .ColloBox').length) return;
+
+        const meaning = this.parseSense($, senseEl, pos, seen);
+        if (meaning) {
+          if (!byPos[pos]) byPos[pos] = [];
+          byPos[pos].push(meaning);
+        }
+      });
+    });
+
+    const meanings = this.sortAndLimit(byPos);
+    if (meanings.length === 0) return null;
+
+    return { canonicalWord, pron: wordPron, meanings };
+  }
+
+  private parseSense(
+    $: cheerio.CheerioAPI,
+    senseEl: Element,
+    pos: string,
+    seen: Set<string>,
+  ): RawMeaning | null {
+    const $sense = $(senseEl);
+
+    // DEF nằm trực tiếp trong Sense/Subsense (Sense cha có Subsense thì không có DEF riêng)
+    const rawDef = $sense.children('.DEF').first().text();
+    if (!rawDef || !isValidDefinition(rawDef)) return null;
+
+    const definition = cleanDefinition(rawDef);
+    for (const s of seen) {
+      if (isSimilar(definition, s)) return null;
+    }
+    seen.add(definition);
+
+    const examples: string[] = [];
+    $sense
+      .children('.EXAMPLE')
+      .add($sense.children('.GramExa').find('.EXAMPLE'))
+      .each((_, el) => {
+        if (examples.length >= MAX_EXAMPLES_PER_SENSE) return false;
+        const text = cleanText($(el).text());
+        if (text.length > 10) examples.push(text);
+      });
+
+    // Longman không có CEFR trong entry
+    return { pos, definition, cefrLevel: '', examples };
+  }
+
+  private readPron($: cheerio.CheerioAPI, $entry: cheerio.Cheerio<any>): Pron {
+    let $scope = $entry.find('.Head').first();
+    if (!$scope.length) $scope = $entry;
+
+    const readIpa = (selector: string): string => {
+      const $el = $scope.find(selector).first();
+      if (!$el.length) return '';
+      return cleanText($el.clone().find('.neutral').remove().end().text());
+    };
+
+    const audio = (selector: string): string =>
+      longmanUrl(
+        $scope.find(selector).first().attr('data-src-mp3') ||
+          $entry.find(selector).first().attr('data-src-mp3'),
+      );
+
+    const ukIpa = readIpa('.PronCodes .PRON');
+    const usIpa = readIpa('.PronCodes .AMEPRON');
+    const ukAudio = audio('.speaker.brefile');
+    const usAudio = audio('.speaker.amefile');
+
+    return {
+      ukIpa: ukIpa || usIpa,
+      usIpa: usIpa || ukIpa,
+      ukAudio: ukAudio || usAudio,
+      usAudio: usAudio || ukAudio,
+    };
+  }
+
+  private sortAndLimit(byPos: Record<string, RawMeaning[]>): RawMeaning[] {
+    const sorted: RawMeaning[] = [];
+    for (const pos of POS_ORDER) if (byPos[pos]) sorted.push(...byPos[pos]);
+    for (const pos of Object.keys(byPos)) {
+      if (!POS_ORDER.includes(pos)) sorted.push(...byPos[pos]);
+    }
+    return sorted.slice(0, MAX_MEANINGS_PER_WORD);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TRANSLATION
+  // ═══════════════════════════════════════════════════════════════════════════
+  private async translateToVi(text: string): Promise<string> {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const response = await fetch(TRANSLATE_API + encodeURIComponent(text), {
+          headers: { 'User-Agent': BROWSER_UA },
+          signal: AbortSignal.timeout(8000),
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+        const parsed = await response.json();
+        const segments: unknown[] = Array.isArray(parsed?.[0]) ? parsed[0] : [];
+        const joined = segments
+          .map((s) => (Array.isArray(s) ? (s[0] as string) : ''))
+          .join('')
+          .trim();
+        if (joined) return joined;
+      } catch {
+        if (attempt < 2) await sleep(400);
+      }
+    }
+    return '';
+  }
+
+  private async translateAll(meanings: RawMeaning[]): Promise<RawMeaning[]> {
+    const output: RawMeaning[] = [];
+    for (let i = 0; i < meanings.length; i += TRANSLATE_BATCH_SIZE) {
+      const batch = meanings.slice(i, i + TRANSLATE_BATCH_SIZE);
+      const translated = await Promise.all(
+        batch.map(async (m) => ({
+          ...m,
+          vnDefinition: await this.translateToVi(m.definition),
+        })),
+      );
+      output.push(...translated);
+      if (i + TRANSLATE_BATCH_SIZE < meanings.length) {
+        await sleep(TRANSLATE_BATCH_DELAY_MS);
+      }
+    }
+    return output;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // AUDIO → SUPABASE S3
+  // ═══════════════════════════════════════════════════════════════════════════
+  private getS3(): S3Client | null {
+    if (this.s3 !== undefined) return this.s3;
+
+    const { S3_ENDPOINT, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY } = process.env;
+    if (!S3_ENDPOINT || !S3_ACCESS_KEY_ID || !S3_SECRET_ACCESS_KEY) {
+      this.logger.warn('S3 not configured → audio giữ nguyên URL Longman');
+      this.s3 = null;
+      return null;
+    }
+
+    this.s3 = new S3Client({
+      region: process.env.S3_REGION ?? 'ap-southeast-1',
+      endpoint: S3_ENDPOINT,
+      forcePathStyle: true,
+      credentials: {
+        accessKeyId: S3_ACCESS_KEY_ID,
+        secretAccessKey: S3_SECRET_ACCESS_KEY,
+      },
+    });
+    return this.s3;
+  }
+
+  private get bucket(): string {
+    return process.env.S3_BUCKET ?? 'vocab';
+  }
+
+  private get publicBaseUrl(): string {
+    return (
+      process.env.PUBLIC_BASE_URL ??
+      `https://${new URL(process.env.S3_ENDPOINT as string).hostname.split('.')[0]}.supabase.co/storage/v1/object/public/${this.bucket}`
+    );
+  }
+
+  private async s3Exists(s3: S3Client, key: string): Promise<boolean> {
+    try {
+      await s3.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async downloadAudio(url: string): Promise<Buffer> {
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const response = await fetch(url, {
+          headers: { 'User-Agent': BROWSER_UA, Referer: `${LONGMAN_BASE}/` },
+          signal: AbortSignal.timeout(20000),
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        if ((response.headers.get('content-type') ?? '').includes('text/html')) {
+          throw new Error('Server returned HTML instead of audio');
+        }
+        const buf = Buffer.from(await response.arrayBuffer());
+        if (buf.length === 0) throw new Error('Empty file');
+        return buf;
+      } catch (err) {
+        lastErr = err;
+        await sleep(500 * attempt);
+      }
+    }
+    throw lastErr;
+  }
+
+  /** Upload 1 audio, trả về URL public (hoặc URL gốc nếu lỗi) */
+  private async uploadOne(
+    accent: 'uk' | 'us',
+    word: string,
+    url: string,
+  ): Promise<string> {
+    const s3 = this.getS3();
+    if (!s3 || !url) return url;
+
+    try {
+      const ext = getExt(url);
+      const key = buildAudioKey(accent, word, ext);
+      const publicUrl = `${this.publicBaseUrl}/${key}`;
+
+      if (!(await this.s3Exists(s3, key))) {
+        const data = await this.downloadAudio(url);
+        await s3.send(
+          new PutObjectCommand({
+            Bucket: this.bucket,
+            Key: key,
+            Body: data,
+            ContentType: CONTENT_TYPES[ext] ?? 'audio/mpeg',
+            CacheControl: 'public, max-age=31536000, immutable',
+          }),
+        );
+      }
+      return publicUrl;
+    } catch (error) {
+      this.logger.warn(
+        `[audio] upload failed (${accent}, ${word}): ${(error as Error).message} → giữ URL gốc`,
+      );
+      return url;
+    }
+  }
+
+  /** Upload audio UK/US của Word → key {accent}/{chữ cái}/{word}.mp3 */
+  private async migrateAudio(word: string, pron: Pron): Promise<Pron> {
+    if (!this.getS3()) return pron;
+
+    const [ukAudio, usAudio] = await Promise.all([
+      this.uploadOne('uk', word, pron.ukAudio),
+      // UK và US trùng URL gốc thì vẫn upload riêng để đúng cấu trúc thư mục
+      this.uploadOne('us', word, pron.usAudio),
+    ]);
+    return { ...pron, ukAudio, usAudio };
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PERSIST
+  // ═══════════════════════════════════════════════════════════════════════════
+  private async saveAlias(alias: string, canonicalWord: string): Promise<void> {
+    if (alias === canonicalWord) return;
+    try {
+      await this.prisma.wordAlias.upsert({
+        where: { alias },
+        create: { alias, canonicalWord },
+        update: { canonicalWord },
+      });
+    } catch {
+      // Non-critical — bỏ qua lỗi trùng / race
+    }
+  }
+
+  private async saveWord(
+    word: string,
+    pron: Pron,
+    meanings: RawMeaning[],
+  ): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      const wordRow = await tx.word.upsert({
+        where: { word },
+        create: {
+          word,
+          ukIpa: pron.ukIpa || null,
+          usIpa: pron.usIpa || null,
+          ukAudioUrl: pron.ukAudio || null,
+          usAudioUrl: pron.usAudio || null,
+        },
+        update: {
+          // undefined = giữ nguyên giá trị cũ nếu nguồn mới không có
+          ukIpa: pron.ukIpa || undefined,
+          usIpa: pron.usIpa || undefined,
+          ukAudioUrl: pron.ukAudio || undefined,
+          usAudioUrl: pron.usAudio || undefined,
+        },
+      });
+
+      // Race: request khác vừa lưu xong → không ghi trùng
+      const count = await tx.wordMeaning.count({ where: { wordId: wordRow.id } });
+      if (count > 0) return;
+
+      await tx.wordMeaning.createMany({
+        data: meanings.map((m) => ({
+          wordId: wordRow.id,
+          definition: m.definition,
+          vnDefinition: m.vnDefinition ?? '',
+          partOfSpeech: m.pos || null,
+          examples: m.examples ?? [],
+          cefrLevel: m.cefrLevel || null,
+        })),
+      });
+    });
+  }
+}

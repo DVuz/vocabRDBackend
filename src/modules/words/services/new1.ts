@@ -508,10 +508,6 @@ export class CambridgeCrawlerService {
             partOfSpeech: meaning.pos || null,
             examples: meaning.examples ?? [],
             cefrLevel: meaning.cefrLevel || null,
-            ukIpa: meaning.ukIpa || null,
-            usIpa: meaning.usIpa || null,
-            ukAudioUrl: meaning.ukAudio || null,
-            usAudioUrl: meaning.usAudio || null,
           },
         }),
       );
