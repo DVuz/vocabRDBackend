@@ -83,9 +83,9 @@ export class ReviewService {
       examples: (meaning.examples as string[]) ?? [],
       ipa: { uk: meaning.ukIpa, us: meaning.usIpa },
       audio: {
-        tts: meaning.ttsAudioUrl,
-        uk: meaning.ukAudioUrl,
-        us: meaning.usAudioUrl,
+        tts: userWord.ttsAudioUrl,
+        uk: userWord.ukAudioUrl,
+        us: userWord.usAudioUrl,
       },
       status: userWord.status ?? UserWordStatus.new,
       currentStreak: userWord.currentStreak,
