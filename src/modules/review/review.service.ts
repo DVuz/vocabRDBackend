@@ -81,7 +81,7 @@ export class ReviewService {
       definition: meaning.definition,
       vnDefinition: meaning.vnDefinition,
       examples: (meaning.examples as string[]) ?? [],
-      ipa: { uk: meaning.ukIpa, us: meaning.usIpa },
+      ipa: { uk: meaning.word.ukIpa, us: meaning.word.usIpa },
       audio: {
         uk: meaning.word.ukAudioUrl,
         us: meaning.word.usAudioUrl,

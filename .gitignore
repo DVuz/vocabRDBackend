@@ -3,6 +3,7 @@
 /node_modules
 /build
 /.chrome-profile
+/.playwright-profile
 
 
 # Logs
