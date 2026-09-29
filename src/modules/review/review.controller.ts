@@ -25,7 +25,7 @@ export class ReviewController {
   })
   @Get('today')
   @HttpCode(HttpStatus.OK)
-  @ResponseMessage('Lấy danh sách từ đến hạn hôm nay thành công')
+  @ResponseMessage('Lấy danh sách từ đến hạn hôm nay thành công 2')
   getTodayDueWords(
     @CurrentUser('userId') userId: number,
     @Query() query: ReviewQueryDto,

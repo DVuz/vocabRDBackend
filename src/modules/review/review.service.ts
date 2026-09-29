@@ -35,7 +35,7 @@ export class ReviewService {
         orderBy: [{ nextReviewAt: 'asc' }, { addedAt: 'asc' }],
       }),
     ]);
-
+    console.log('getTodayDueWords:', { total, words, page, pageSize });
     return {
       data: words.map((word) => this.mapUserWordRow(word)),
       pagination: buildPagination(total, page, pageSize),
@@ -83,9 +83,8 @@ export class ReviewService {
       examples: (meaning.examples as string[]) ?? [],
       ipa: { uk: meaning.ukIpa, us: meaning.usIpa },
       audio: {
-        tts: userWord.ttsAudioUrl,
-        uk: userWord.ukAudioUrl,
-        us: userWord.usAudioUrl,
+        uk: meaning.word.ukAudioUrl,
+        us: meaning.word.usAudioUrl,
       },
       status: userWord.status ?? UserWordStatus.new,
       currentStreak: userWord.currentStreak,
