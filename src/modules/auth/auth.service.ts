@@ -119,17 +119,25 @@ export class AuthService {
     if (!clientId || !clientSecret)
       throw new BadRequestException('Google config missing');
 
-    const idToken = await exchangeGoogleCode(
-      this.googleClient,
-      dto.code,
-      dto.redirect_uri,
-      dto.codeVerifier,
-    );
-    const ticket = await verifyGoogleIdToken(
-      this.googleClient,
-      idToken,
-      clientId,
-    );
+    let idToken = dto.idToken;
+    if (!idToken) {
+      if (!dto.code || !dto.redirect_uri)
+        throw new BadRequestException('code or idToken required');
+      idToken = await exchangeGoogleCode(
+        this.googleClient,
+        dto.code,
+        dto.redirect_uri,
+        dto.codeVerifier,
+      );
+    }
+    
+      const audience = [
+        clientId,
+        this.configService.get<string>('google.androidClientId'),
+        this.configService.get<string>('google.iosClientId'),
+      ].filter(Boolean) as string[];
+  
+    const ticket = await this.googleClient.verifyIdToken({ idToken, audience });
     const googlePayload = ticket.getPayload();
     if (!googlePayload?.email || !googlePayload.email_verified)
       throw new UnauthorizedException('Google email not verified');

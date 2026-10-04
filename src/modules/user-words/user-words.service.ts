@@ -6,14 +6,10 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { SharedTtsAudioService } from './services/shared-tts-audio.service';
 
 @Injectable()
 export class UserWordsService {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly sharedTtsAudioService: SharedTtsAudioService,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   /**
    * Save a word meaning to the user's list. If the word meaning is already saved, return the existing record.
@@ -52,15 +48,6 @@ export class UserWordsService {
       },
     });
 
-    const ttsAudioUrl = meaning.ttsAudioUrl
-      ? meaning.ttsAudioUrl
-      : await this.sharedTtsAudioService.ensureMeaningTtsAudio({
-          userId,
-          meaningId: meaning.id,
-          definition: meaning.definition,
-          ttsAudioUrl: meaning.ttsAudioUrl,
-        });
-
     return {
       userWordId: userWord.id,
       wordId: meaning.wordId,
@@ -69,7 +56,7 @@ export class UserWordsService {
       definition: meaning.definition,
       vnDefinition: meaning.vnDefinition,
       partOfSpeech: meaning.partOfSpeech,
-      audioUrl: ttsAudioUrl,
+      audioUrl: meaning.ttsAudioUrl,
       addedAt: userWord.addedAt,
     };
   }
