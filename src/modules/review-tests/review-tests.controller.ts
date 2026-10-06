@@ -26,7 +26,15 @@ import { ReviewTestsService } from './review-tests.service';
 export class ReviewTestsController {
   constructor(private readonly reviewTestsService: ReviewTestsService) {}
 
-  @ApiOperation({ summary: 'Lấy danh sách từ cần kiểm tra theo ưu tiên' })
+  @ApiOperation({
+    summary: 'Lấy danh sách từ cần kiểm tra theo ưu tiên',
+    description: `
+Queue lấy các từ của user có nextReviewAt <= thời điểm hiện tại, bao gồm status new.
+Từ mới được tạo với lịch kiểm tra lần đầu sau 4 giờ; có thể truyền status=new để lọc riêng status này.
+Sau đó hệ thống sắp xếp theo ưu tiên: forgotten -> learning -> familiar -> mastered -> new.
+Queue bị giới hạn tối đa 20 từ mỗi lần tạo, rồi mới áp dụng page và pageSize.
+    `.trim(),
+  })
   @Get('queue')
   @HttpCode(HttpStatus.OK)
   @ResponseMessage('Lấy danh sách từ cần kiểm tra thành công')

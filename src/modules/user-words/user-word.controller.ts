@@ -36,6 +36,8 @@ export class UserWordController {
 
   @ApiOperation({
     summary: 'Lưu từ vào danh sách của user đang đăng nhập (lấy userId từ JWT)',
+    description:
+      'Từ mới được tạo với status=new và lịch kiểm tra lần đầu sau 4 giờ.',
   })
   @ApiResponse({ status: 201, description: 'Lưu thành công' })
   @ApiResponse({ status: 400, description: 'Dữ liệu không hợp lệ' })

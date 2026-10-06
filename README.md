@@ -25,6 +25,57 @@
 
 [Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
 
+## Google Drive API
+
+Swagger is available at `http://localhost:3000/docs` (or the configured port).
+Authorize with a JWT access token, then use the **Google Drive** endpoints:
+
+- `GET /api/google-drive/files`: returns file metadata from the configured
+  folder. Use `?search=lesson` to search by file name. It does not return file
+  content.
+- `GET /api/google-drive/files?folderId=...`: lists direct children of another
+  folder.
+- `GET /api/google-drive/tree`: returns the complete recursive folder tree.
+  Use `?folderId=...` to start at another folder.
+- `GET /api/google-drive/folders/:folderId/files`: lists direct children of a
+  specific folder.
+- `GET /api/google-drive/search?q=lesson`: searches file names recursively and
+  returns each match with its path.
+- `GET /api/google-drive/files/:fileId`: returns metadata for one file.
+- `GET /api/google-drive/files/:fileId/content`: downloads a text or Markdown
+  file and returns its content in the `content` field. Markdown links to files
+  in a sibling `Audio` folder are resolved in the `audioFiles` field.
+- `GET /api/google-drive/files/:fileId/lesson`: returns a lesson-shaped
+  response with `title`, `markdown`, and resolved `audios`.
+- `GET /api/google-drive/files/:fileId/stream`: streams an audio/media file.
+- `GET /api/google-drive/files/:fileId/download`: downloads an audio/media
+  file.
+
+All endpoints require `Authorization: Bearer <access_token>`. The `stream`
+endpoint is suitable for an HTML `<audio>` element. Audio references in
+Markdown should use a relative link such as `[listen](Audio/audio-01.mp3)` or
+`[listen](../Audio/audio-01.mp3)`, and the corresponding file must exist in a
+folder named `Audio` beside the Markdown file.
+
+The service reads the folder directly from Google Drive; it does not store the
+file list in the database. Configure `GOOGLE_DRIVE_FOLDER_ID`,
+`GOOGLE_DRIVE_SERVICE_ACCOUNT_EMAIL`, and
+`GOOGLE_DRIVE_SERVICE_ACCOUNT_PRIVATE_KEY` in `.env`, and share the folder with
+the service account as a Viewer.
+
+Google Drive metadata, the recursive tree, direct folder listings, and Markdown
+lesson responses are cached in Redis for 5 minutes. Set `REDIS_URL` to enable
+the cache:
+
+```env
+REDIS_URL=rediss://default:password@your-redis-host:port
+```
+
+The root tree is refreshed from Google Drive by a background cron job every
+five minutes. Audio streams are not stored in Redis; they are streamed directly
+from Google Drive. If `REDIS_URL` is not configured, the API continues to work
+without caching and logs a warning.
+
 ## Project setup
 
 ```bash

@@ -18,6 +18,9 @@ import { WordListItermsModule } from './modules/word-list-iterms/word-list-iterm
 import { ReviewModule } from './modules/review/review.module';
 import { ReviewTestsModule } from './modules/review-tests/review-tests.module';
 import { TtsConfigsModule } from './modules/tts-configs/tts-configs.module';
+import { GoogleDriveModule } from './modules/google-drive/google-drive.module';
+import { ScheduleModule } from '@nestjs/schedule';
+import { RedisModule } from './common/cache/redis.module';
 
 @Module({
   imports: [
@@ -25,6 +28,8 @@ import { TtsConfigsModule } from './modules/tts-configs/tts-configs.module';
       isGlobal: true,
       load: [jwtConfig, googleConfig, elevenlabsConfig, cloudinaryConfig],
     }),
+    ScheduleModule.forRoot(),
+    RedisModule,
     PrismaModule,
     AuthModule,
     WordModule,
@@ -34,6 +39,7 @@ import { TtsConfigsModule } from './modules/tts-configs/tts-configs.module';
     ReviewModule,
     ReviewTestsModule,
     TtsConfigsModule,
+    GoogleDriveModule,
   ],
   controllers: [AppController, WordListsController],
   providers: [AppService, WordListsService],

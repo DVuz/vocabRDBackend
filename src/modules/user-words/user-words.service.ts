@@ -6,6 +6,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { INITIAL_REVIEW_DELAY_HOURS } from 'src/modules/review/helpers/review.constants';
 
 @Injectable()
 export class UserWordsService {
@@ -15,7 +16,8 @@ export class UserWordsService {
    * Save a word meaning to the user's list. If the word meaning is already saved, return the existing record.
    * @param userId The ID of the user (extracted from JWT)
    * @param meaningId The ID of the word meaning to save
-   * @returns The saved user word record
+   * @returns The saved user word record. New words are due for their first
+   * review four hours after they are saved.
    */
   async addUserWord(userId: number, meaningId: number) {
     //check meaningId exist in wordMeaning table
@@ -40,11 +42,15 @@ export class UserWordsService {
       throw new ConflictException('User already saved this word meaning');
     }
 
+    const nextReviewAt = new Date(
+      Date.now() + INITIAL_REVIEW_DELAY_HOURS * 60 * 60 * 1000,
+    );
     const userWord = await this.prisma.userWord.create({
       data: {
         userId,
         wordMeaningId: meaningId,
         status: 'new',
+        nextReviewAt,
       },
     });
 
@@ -57,6 +63,8 @@ export class UserWordsService {
       vnDefinition: meaning.vnDefinition,
       partOfSpeech: meaning.partOfSpeech,
       audioUrl: meaning.ttsAudioUrl,
+      status: userWord.status,
+      nextReviewAt: userWord.nextReviewAt,
       addedAt: userWord.addedAt,
     };
   }

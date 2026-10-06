@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { SessionType, SourceType, UserWordStatus } from '@prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
 import {
@@ -26,10 +30,17 @@ export class ReviewTestsService {
     const pageSize = query.pageSize ?? DEFAULT_PAGE_SIZE;
     const now = new Date();
 
+    /*
+     * Cách chọn "từ cần học":
+     * - Mặc định lấy mọi status đã đến hạn, bao gồm status `new`.
+     * - Chỉ lấy từ đã đến hạn: `nextReviewAt <= now`.
+     * - Sắp xếp ưu tiên: forgotten -> learning -> familiar -> mastered -> new.
+     * - Chỉ lấy tối đa MAX_DAILY (hiện tại là 20) trước khi phân trang.
+     */
     const candidates = await this.prisma.userWord.findMany({
       where: {
         userId,
-        ...(query.status ? { status: query.status } : { status: { not: UserWordStatus.new } }),
+        ...(query.status ? { status: query.status } : {}),
         nextReviewAt: { lte: now },
       },
       include: { wordMeaning: { include: { word: true } } },
@@ -41,7 +52,9 @@ export class ReviewTestsService {
     const end = start + pageSize;
 
     return {
-      data: prioritized.slice(start, end).map((word) => this.mapUserWordRow(word)),
+      data: prioritized
+        .slice(start, end)
+        .map((word) => this.mapUserWordRow(word)),
       pagination: buildPagination(prioritized.length, page, pageSize),
     };
   }
@@ -50,8 +63,16 @@ export class ReviewTestsService {
     const { results, durationSeconds } = payload;
     const now = new Date();
 
+    /*
+     * Mỗi câu trả lời cập nhật lịch Leitner/SM-2 rút gọn:
+     * - Đúng: tăng streak, cập nhật easeFactor và tăng intervalDays.
+     * - Sai: reset streak, intervalDays = 1 và chuyển status thành forgotten.
+     * - nextReviewAt = thời điểm hiện tại + intervalDays.
+     */
     return this.prisma.$transaction(async (tx) => {
-      const userWordIds = [...new Set(results.map((result) => result.userWordId))];
+      const userWordIds = [
+        ...new Set(results.map((result) => result.userWordId)),
+      ];
       const beforeWords = await tx.userWord.findMany({
         where: { userId, id: { in: userWordIds } },
       });
@@ -75,7 +96,9 @@ export class ReviewTestsService {
       for (const item of results) {
         const existing = beforeMap.get(item.userWordId);
         if (!existing) {
-          throw new NotFoundException(`UserWord ${item.userWordId} không tồn tại`);
+          throw new NotFoundException(
+            `UserWord ${item.userWordId} không tồn tại`,
+          );
         }
 
         const previousStreak = existing.currentStreak ?? 0;
