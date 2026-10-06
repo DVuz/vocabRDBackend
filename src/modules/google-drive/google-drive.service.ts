@@ -11,7 +11,7 @@ import { RedisService } from 'src/common/cache/redis.service';
 
 const GOOGLE_FOLDER_MIME = 'application/vnd.google-apps.folder';
 const DRIVE_CACHE_TTL_SECONDS = 300;
-const DRIVE_TREE_CACHE_PREFIX = 'google-drive:tree:';
+const DRIVE_TREE_CACHE_PREFIX = 'google-drive:tree:v2:';
 const DRIVE_FILE_CACHE_PREFIX = 'google-drive:file:v3:';
 export interface DriveTreeItem {
   id: string;
@@ -92,7 +92,8 @@ export class GoogleDriveService {
       });
       files.push(
         ...(response.data.files ?? []).filter(
-          (file) => file.name?.trim().toLowerCase() !== 'obsidian',
+          (file) =>
+            file.name?.trim().replace(/^\./, '').toLowerCase() !== 'obsidian',
         ),
       );
       pageToken = response.data.nextPageToken ?? undefined;
@@ -349,7 +350,7 @@ export class GoogleDriveService {
         return file
           ? {
               ...this.toItem(file),
-              streamUrl: `/api/google-drive/files/${file.id}/stream`,
+              streamUrl: `/google-drive/files/${file.id}/stream`,
             }
           : null;
       })

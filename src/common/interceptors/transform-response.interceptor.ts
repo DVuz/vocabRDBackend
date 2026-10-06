@@ -4,6 +4,7 @@ import {
   HttpStatus,
   Injectable,
   NestInterceptor,
+  StreamableFile,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Observable } from 'rxjs';
@@ -30,14 +31,14 @@ export interface ApiResponse<T> {
 @Injectable()
 export class TransformResponseInterceptor<T> implements NestInterceptor<
   T,
-  ApiResponse<T>
+  ApiResponse<T> | T | StreamableFile
 > {
   constructor(private readonly reflector: Reflector) {}
 
   intercept(
     context: ExecutionContext,
     next: CallHandler,
-  ): Observable<ApiResponse<T>> {
+  ): Observable<ApiResponse<T> | T | StreamableFile> {
     const httpResponse = context.switchToHttp().getResponse();
     const customMessage = this.reflector.getAllAndOverride<string>(
       RESPONSE_MESSAGE_KEY,
@@ -46,6 +47,11 @@ export class TransformResponseInterceptor<T> implements NestInterceptor<
 
     return next.handle().pipe(
       map((data) => {
+        // Binary responses must bypass the JSON envelope.
+        if (data instanceof StreamableFile) {
+          return data;
+        }
+
         const statusCode: HttpStatus = httpResponse.statusCode;
         const message = customMessage ?? data?.message ?? 'Success';
         const pagination: PaginationMeta | undefined = data?.pagination;
