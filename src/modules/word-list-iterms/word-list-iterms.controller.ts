@@ -57,6 +57,18 @@ export class WordListItermsController {
     return this.wordListItermsService.findAll(userId);
   }
 
+  @ApiOperation({ summary: 'Lấy tất cả word list item của một word list' })
+  @ApiOkResponse({ type: WordListItermResponseDto, isArray: true })
+  @Get('list/:listId')
+  @HttpCode(HttpStatus.OK)
+  @ResponseMessage('Lấy danh sách word list item theo word list thành công')
+  findAllByList(
+    @CurrentUser('userId') userId: number,
+    @Param('listId', ParsePositiveIntPipe) listId: number,
+  ) {
+    return this.wordListItermsService.findAllByList(userId, listId);
+  }
+
   @ApiOperation({ summary: 'Lấy chi tiết một word list item' })
   @ApiOkResponse({ type: WordListItermResponseDto })
   @Get(':id')

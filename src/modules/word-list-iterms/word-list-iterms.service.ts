@@ -30,11 +30,24 @@ export class WordListItermsService {
               id: true,
               definition: true,
               vnDefinition: true,
-              word: { select: { word: true } },
+              partOfSpeech: true,
+              cefrLevel: true,
+              examples: true,
+              ttsAudioUrl: true,
+              word: {
+                select: {
+                  id: true,
+                  word: true,
+                  ukIpa: true,
+                  usIpa: true,
+                  ukAudioUrl: true,
+                  usAudioUrl: true,
+                },
+              },
             },
           },
         },
-      });
+      }).then((item) => this.toResponse(item));
     } catch (error) {
       this.handlePrismaWriteError(error);
     }
@@ -56,11 +69,60 @@ export class WordListItermsService {
             id: true,
             definition: true,
             vnDefinition: true,
-            word: { select: { word: true } },
+            partOfSpeech: true,
+            cefrLevel: true,
+            examples: true,
+            ttsAudioUrl: true,
+            word: {
+              select: {
+                id: true,
+                word: true,
+                ukIpa: true,
+                usIpa: true,
+                ukAudioUrl: true,
+                usAudioUrl: true,
+              },
+            },
           },
         },
       },
-    });
+    }).then((items) => items.map((item) => this.toResponse(item)));
+  }
+
+  async findAllByList(userId: number, listId: number) {
+    await this.ensureUserOwnsWordList(userId, listId);
+
+    return this.prisma.wordListItem.findMany({
+      where: { listId },
+      orderBy: { addedAt: 'desc' },
+      select: {
+        id: true,
+        listId: true,
+        wordMeaningId: true,
+        addedAt: true,
+        wordMeaning: {
+          select: {
+            id: true,
+            definition: true,
+            vnDefinition: true,
+            partOfSpeech: true,
+            cefrLevel: true,
+            examples: true,
+            ttsAudioUrl: true,
+            word: {
+              select: {
+                id: true,
+                word: true,
+                ukIpa: true,
+                usIpa: true,
+                ukAudioUrl: true,
+                usAudioUrl: true,
+              },
+            },
+          },
+        },
+      },
+    }).then((items) => items.map((item) => this.toResponse(item)));
   }
 
   async findOne(userId: number, id: number) {
@@ -79,7 +141,20 @@ export class WordListItermsService {
             id: true,
             definition: true,
             vnDefinition: true,
-            word: { select: { word: true } },
+            partOfSpeech: true,
+            cefrLevel: true,
+            examples: true,
+            ttsAudioUrl: true,
+            word: {
+              select: {
+                id: true,
+                word: true,
+                ukIpa: true,
+                usIpa: true,
+                ukAudioUrl: true,
+                usAudioUrl: true,
+              },
+            },
           },
         },
       },
@@ -89,7 +164,7 @@ export class WordListItermsService {
       throw new NotFoundException('Word list item not found');
     }
 
-    return item;
+    return this.toResponse(item);
   }
 
   async update(
@@ -128,11 +203,24 @@ export class WordListItermsService {
               id: true,
               definition: true,
               vnDefinition: true,
-              word: { select: { word: true } },
+              partOfSpeech: true,
+              cefrLevel: true,
+              examples: true,
+              ttsAudioUrl: true,
+              word: {
+                select: {
+                  id: true,
+                  word: true,
+                  ukIpa: true,
+                  usIpa: true,
+                  ukAudioUrl: true,
+                  usAudioUrl: true,
+                },
+              },
             },
           },
         },
-      });
+      }).then((item) => this.toResponse(item));
     } catch (error) {
       this.handlePrismaWriteError(error);
     }
@@ -153,6 +241,56 @@ export class WordListItermsService {
 
     await this.prisma.wordListItem.delete({ where: { id } });
     return { message: 'Word list item deleted successfully' };
+  }
+
+  private toResponse(item: {
+    id: number;
+    listId: number;
+    wordMeaningId: number;
+    addedAt: Date;
+    wordMeaning: {
+      id: number;
+      definition: string;
+      vnDefinition: string;
+      partOfSpeech: string | null;
+      cefrLevel: string | null;
+      examples: Prisma.JsonValue | null;
+      ttsAudioUrl: string | null;
+      word: {
+        id: number;
+        word: string;
+        ukIpa: string | null;
+        usIpa: string | null;
+        ukAudioUrl: string | null;
+        usAudioUrl: string | null;
+      };
+    };
+  }) {
+    const { wordMeaning } = item;
+    return {
+      id: item.id,
+      listId: item.listId,
+      wordMeaningId: item.wordMeaningId,
+      addedAt: item.addedAt,
+      wordMeaning: {
+        id: wordMeaning.id,
+        definition: wordMeaning.definition,
+        vnDefinition: wordMeaning.vnDefinition,
+        partOfSpeech: wordMeaning.partOfSpeech,
+        word: {
+          word: wordMeaning.word.word,
+          ipa: {
+            uk: wordMeaning.word.ukIpa,
+            us: wordMeaning.word.usIpa,
+          },
+          audio: {
+            tts: wordMeaning.ttsAudioUrl,
+            uk: wordMeaning.word.ukAudioUrl,
+            us: wordMeaning.word.usAudioUrl,
+          },
+        },
+      },
+    };
   }
 
   private async ensureUserOwnsWordList(userId: number, listId: number) {

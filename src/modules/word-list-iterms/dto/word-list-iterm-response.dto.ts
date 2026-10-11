@@ -1,8 +1,42 @@
 import { ApiProperty } from '@nestjs/swagger';
 
-export class WordOfMeaningDto {
+export class WordIpaDto {
+  @ApiProperty({ example: 'əˈbændən', nullable: true })
+  uk: string | null;
+
+  @ApiProperty({ example: 'əˈbændən', nullable: true })
+  us: string | null;
+}
+
+export class WordAudioDto {
+  @ApiProperty({
+    example: 'https://res.cloudinary.com/example/audio/abandon.mp3',
+    nullable: true,
+  })
+  tts: string | null;
+
+  @ApiProperty({
+    example: 'https://example.com/audio/abandon-uk.mp3',
+    nullable: true,
+  })
+  uk: string | null;
+
+  @ApiProperty({
+    example: 'https://example.com/audio/abandon-us.mp3',
+    nullable: true,
+  })
+  us: string | null;
+}
+
+export class WordDto {
   @ApiProperty({ example: 'abandon' })
   word: string;
+
+  @ApiProperty({ type: WordIpaDto })
+  ipa: WordIpaDto;
+
+  @ApiProperty({ type: WordAudioDto })
+  audio: WordAudioDto;
 }
 
 export class WordMeaningInListItemDto {
@@ -15,8 +49,11 @@ export class WordMeaningInListItemDto {
   @ApiProperty({ example: 'bỏ lại phía sau' })
   vnDefinition: string;
 
-  @ApiProperty({ type: WordOfMeaningDto })
-  word: WordOfMeaningDto;
+  @ApiProperty({ example: 'noun', nullable: true })
+  partOfSpeech: string | null;
+
+  @ApiProperty({ type: WordDto })
+  word: WordDto;
 }
 
 export class WordListItermResponseDto {
