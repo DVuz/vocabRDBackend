@@ -1,6 +1,8 @@
 const { PrismaClient } = require('@prisma/client');
 const { PrismaPg } = require('@prisma/adapter-pg');
 
+/* API profiles are provided through ELEVENLABS_API_KEY_1..4 and matching voice IDs. */
+/*
 const ELEVENLABS_APIS = [
   {
     //vtd262002
@@ -51,6 +53,7 @@ const ELEVENLABS_APIS = [
     enabled: true,
   },
 ];
+*/
 
 function mask(value) {
   if (!value) return 'missing';
@@ -60,26 +63,31 @@ function mask(value) {
 
 function parseConfigsFromEnv() {
   const modelId = process.env.ELEVENLABS_MODEL_ID ?? 'eleven_multilingual_v2';
-  const fromConstant = ELEVENLABS_APIS.filter(
-    (item) => item.enabled && item.apiKey,
-  ).map((item, index) => ({
-    id: item.id,
-    name: item.name,
-    apiKey: item.apiKey,
-    isActive: true,
-    isSystemDefault: index === 0,
-    voiceModels: [
-      {
-        label: `${item.name} Voice`,
-        voiceId: item.voiceId,
-        modelId,
-        isDefault: true,
-      },
-    ],
-  }));
+  const fromIndexedEnv = [1, 2, 3, 4]
+    .map((index) => ({
+      name: `ElevenLabs - Key ${index}`,
+      apiKey: process.env[`ELEVENLABS_API_KEY_${index}`],
+      voiceId: process.env[`ELEVENLABS_VOICE_ID_${index}`],
+      modelId: process.env[`ELEVENLABS_MODEL_ID_${index}`] ?? modelId,
+    }))
+    .filter((item) => item.apiKey && item.voiceId)
+    .map((item, index) => ({
+      name: item.name,
+      apiKey: item.apiKey,
+      isActive: true,
+      isSystemDefault: index === 0,
+      voiceModels: [
+        {
+          label: `${item.name} Voice`,
+          voiceId: item.voiceId,
+          modelId: item.modelId,
+          isDefault: true,
+        },
+      ],
+    }));
 
-  if (fromConstant.length > 0) {
-    return fromConstant;
+  if (fromIndexedEnv.length > 0) {
+    return fromIndexedEnv;
   }
 
   const rawJson = process.env.TTS_CONFIGS_JSON;

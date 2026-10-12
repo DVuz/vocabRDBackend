@@ -7,10 +7,14 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { INITIAL_REVIEW_DELAY_HOURS } from 'src/modules/review/helpers/review.constants';
+import { SharedTtsAudioService } from './services/shared-tts-audio.service';
 
 @Injectable()
 export class UserWordsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly sharedTtsAudioService: SharedTtsAudioService,
+  ) {}
 
   /**
    * Save a word meaning to the user's list. If the word meaning is already saved, return the existing record.
@@ -41,6 +45,13 @@ export class UserWordsService {
     if (existed) {
       throw new ConflictException('User already saved this word meaning');
     }
+
+    await this.sharedTtsAudioService.ensureMeaningTtsAudio({
+      userId,
+      meaningId: meaning.id,
+      definition: meaning.definition,
+      ttsAudioUrl: meaning.ttsAudioUrl,
+    });
 
     const nextReviewAt = new Date(
       Date.now() + INITIAL_REVIEW_DELAY_HOURS * 60 * 60 * 1000,

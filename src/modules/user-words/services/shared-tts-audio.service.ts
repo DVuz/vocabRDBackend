@@ -11,9 +11,18 @@ import { PrismaService } from 'src/prisma/prisma.service';
 @Injectable()
 export class SharedTtsAudioService {
   private readonly logger = new Logger(SharedTtsAudioService.name);
+  private readonly profileCacheTtlMs = 5 * 60 * 1000;
+  private systemProfilesCache: CachedProfiles | null = null;
+  private readonly userProfilesCache = new Map<number, CachedProfiles>();
 
   private cleanValue(value: string | undefined | null) {
     return value?.trim() ?? '';
+  }
+
+  private isCacheValid(
+    cache: CachedProfiles | null | undefined,
+  ): cache is CachedProfiles {
+    return cache !== null && cache !== undefined && cache.expiresAt > Date.now();
   }
 
   private maskSecret(value: string | undefined | null) {
@@ -49,7 +58,7 @@ export class SharedTtsAudioService {
   }
 
   async ensureMeaningTtsAudio(params: {
-    userId: number;
+    userId: number | null;
     meaningId: number;
     definition: string;
     ttsAudioUrl: string | null;
@@ -65,28 +74,45 @@ export class SharedTtsAudioService {
       return params.ttsAudioUrl;
     }
 
-    const profile = await this.resolveTtsProfile(params.userId);
-    if (!profile) {
+    const profiles = await this.resolveTtsProfiles(params.userId);
+    if (!profiles.length) {
       this.logger.warn(
         `No active TTS profile found for user=${params.userId}, skip generation`,
       );
       return null;
     }
 
-    this.logger.log(
-      `[TTS] profile selected user=${params.userId} voice=${profile.voiceId} model=${profile.modelId} key=${this.maskSecret(profile.apiKey)}`,
-    );
-
     const text = params.definition;
-    this.logger.log(
-      `[TTS] generating via ElevenLabs meaning=${params.meaningId} textLength=${text.length}`,
-    );
-    const audioBuffer = await this.generateFromElevenLabs(
-      text,
-      profile.apiKey,
-      profile.voiceId,
-      profile.modelId,
-    );
+    let audioBuffer: Buffer | null = null;
+    let lastLimitError: Error | null = null;
+
+    for (const [index, profile] of profiles.entries()) {
+      try {
+        this.logger.log(
+          `[TTS] profile ${index + 1}/${profiles.length} selected user=${params.userId} voice=${profile.voiceId} model=${profile.modelId} key=${this.maskSecret(profile.apiKey)}`,
+        );
+        audioBuffer = await this.generateFromElevenLabs(
+          text,
+          profile.apiKey,
+          profile.voiceId,
+          profile.modelId,
+        );
+        break;
+      } catch (error) {
+        if (!this.isRetryableElevenLabsError(error)) {
+          throw error;
+        }
+
+        lastLimitError = error instanceof Error ? error : new Error(String(error));
+        this.logger.warn(
+          `[TTS] profile ${index + 1}/${profiles.length} is unavailable, trying next profile`,
+        );
+      }
+    }
+
+    if (!audioBuffer) {
+      throw lastLimitError ?? new BadGatewayException('All ElevenLabs profiles are unavailable');
+    }
 
     this.logger.log(
       `[TTS] ElevenLabs success meaning=${params.meaningId} bytes=${audioBuffer.length}`,
@@ -122,57 +148,60 @@ export class SharedTtsAudioService {
     return uploaded.secure_url;
   }
 
-  private async resolveTtsProfile(userId: number) {
-    const userConfigs = await this.prisma.userTtsConfig.findMany({
-      where: { userId, isActive: true },
+  private async resolveTtsProfiles(userId: number | null) {
+    if (userId !== null) {
+      const cachedUserProfiles = this.userProfilesCache.get(userId);
+      if (this.isCacheValid(cachedUserProfiles)) {
+        if (cachedUserProfiles.profiles.length) {
+          return cachedUserProfiles.profiles;
+        }
+      } else {
+        const userProfiles = await this.loadProfiles(userId);
+        this.userProfilesCache.set(userId, this.createCache(userProfiles));
+        if (userProfiles.length) {
+          return userProfiles;
+        }
+      }
+    }
+
+    const systemProfilesCache = this.systemProfilesCache;
+    if (this.isCacheValid(systemProfilesCache)) {
+      return systemProfilesCache.profiles;
+    }
+
+    const systemProfiles = await this.loadProfiles(null);
+    this.systemProfilesCache = this.createCache(systemProfiles);
+    return systemProfiles;
+  }
+
+  private async loadProfiles(userId: number | null) {
+    const configs = await this.prisma.userTtsConfig.findMany({
+      where: { userId, isActive: true, provider: 'elevenlabs' },
       include: { voiceModels: true },
       orderBy: { createdAt: 'desc' },
     });
-
-    const userProfiles = this.toProfiles(userConfigs);
+    const profiles = this.toProfiles(configs);
     this.logger.log(
-      `[TTS] user profiles user=${userId} configs=${userConfigs.length} profiles=${userProfiles.length}`,
+      `[TTS] loaded database profiles user=${userId} configs=${configs.length} profiles=${profiles.length}`,
     );
-    const randomUserProfile = this.pickRandom(userProfiles);
-    if (randomUserProfile) {
-      this.logger.log(`[TTS] using user profile user=${userId}`);
-      return randomUserProfile;
-    }
+    return profiles;
+  }
 
-    const systemConfigs = await this.prisma.userTtsConfig.findMany({
-      where: { userId: null, isActive: true },
-      include: { voiceModels: true },
-      orderBy: { createdAt: 'desc' },
-    });
-
-    const systemProfiles = this.toProfiles(systemConfigs);
-    this.logger.log(
-      `[TTS] system profiles configs=${systemConfigs.length} profiles=${systemProfiles.length}`,
-    );
-    const randomSystemProfile = this.pickRandom(systemProfiles);
-    if (randomSystemProfile) {
-      this.logger.log('[TTS] using system default profile');
-      return randomSystemProfile;
-    }
-
-    const envApiKey = this.configService.get<string>('elevenlabs.apiKey');
-    const envVoiceId = this.configService.get<string>('elevenlabs.voiceId');
-    const envModelId = this.configService.get<string>('elevenlabs.modelId');
-
-    if (!envApiKey || !envVoiceId || !envModelId) {
-      this.logger.warn('[TTS] no env fallback profile');
-      return null;
-    }
-
-    this.logger.log(
-      `[TTS] using env fallback profile voice=${envVoiceId} model=${envModelId} key=${this.maskSecret(envApiKey)}`,
-    );
-
+  private createCache(profiles: TtsProfile[]): CachedProfiles {
     return {
-      apiKey: this.cleanValue(envApiKey),
-      voiceId: this.cleanValue(envVoiceId),
-      modelId: this.cleanValue(envModelId),
+      profiles,
+      expiresAt: Date.now() + this.profileCacheTtlMs,
     };
+  }
+
+  clearProfileCache(userId?: number) {
+    if (userId === undefined) {
+      this.systemProfilesCache = null;
+      this.userProfilesCache.clear();
+      return;
+    }
+
+    this.userProfilesCache.delete(userId);
   }
 
   private toProfiles(
@@ -190,13 +219,10 @@ export class SharedTtsAudioService {
     );
   }
 
-  private pickRandom<T>(items: T[]): T | null {
-    if (!items.length) {
-      return null;
-    }
-
-    const index = Math.floor(Math.random() * items.length);
-    return items[index];
+  private isRetryableElevenLabsError(error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    return /\b(401|402|429)\b/.test(message) ||
+      /(quota|credit|rate.?limit|too many requests)/i.test(message);
   }
 
   private async generateFromElevenLabs(
@@ -282,4 +308,16 @@ export class SharedTtsAudioService {
       throw new InternalServerErrorException('Cloudinary upload failed');
     }
   }
+
 }
+
+type TtsProfile = {
+  apiKey: string;
+  voiceId: string;
+  modelId: string;
+};
+
+type CachedProfiles = {
+  profiles: TtsProfile[];
+  expiresAt: number;
+};
