@@ -12,7 +12,7 @@ import { RedisService } from 'src/common/cache/redis.service';
 const GOOGLE_FOLDER_MIME = 'application/vnd.google-apps.folder';
 const DRIVE_CACHE_TTL_SECONDS = 300;
 const DRIVE_TREE_CACHE_PREFIX = 'google-drive:tree:v2:';
-const DRIVE_FILE_CACHE_PREFIX = 'google-drive:file:v3:';
+const DRIVE_FILE_CACHE_PREFIX = 'google-drive:file:v4:';
 export interface DriveTreeItem {
   id: string;
   name: string;
@@ -24,6 +24,9 @@ export interface DriveTreeItem {
   path?: string[];
   children?: DriveTreeItem[];
 }
+
+type ResolvedMediaFile = DriveTreeItem & { streamUrl: string };
+type ResolvedImageFile = ResolvedMediaFile & { imageUrl: string };
 
 @Injectable()
 export class GoogleDriveService {
@@ -245,7 +248,8 @@ export class GoogleDriveService {
       mimeType: string | null | undefined;
       modifiedTime: string | null | undefined;
       content: string;
-      audioFiles: (DriveTreeItem & { streamUrl: string })[];
+      audioFiles: ResolvedMediaFile[];
+      imageFiles: ResolvedImageFile[];
     }>(cacheKey);
     if (cached) {
       return cached;
@@ -262,6 +266,7 @@ export class GoogleDriveService {
           ? response.data
           : JSON.stringify(response.data);
       const audioFiles = await this.findReferencedAudio(metadata, content);
+      const imageFiles = await this.findReferencedImages(metadata, content);
 
       const result = {
         id: metadata.id,
@@ -270,6 +275,7 @@ export class GoogleDriveService {
         modifiedTime: metadata.modifiedTime,
         content,
         audioFiles,
+        imageFiles,
       };
       await this.redisService.set(cacheKey, result, DRIVE_CACHE_TTL_SECONDS);
       return result;
@@ -289,6 +295,7 @@ export class GoogleDriveService {
       mimeType: content.mimeType,
       markdown: content.content,
       audios: content.audioFiles,
+      images: content.imageFiles ?? [],
     };
   }
 
@@ -354,7 +361,61 @@ export class GoogleDriveService {
             }
           : null;
       })
-      .filter((file): file is DriveTreeItem & { streamUrl: string } => !!file);
+      .filter((file): file is ResolvedMediaFile => !!file);
+  }
+
+  private async findReferencedImages(
+    markdownFile: drive_v3.Schema$File,
+    content: string,
+  ): Promise<ResolvedImageFile[]> {
+    const markdownImageLinks = [
+      ...content.matchAll(/!\[[^\]]*\]\(([^)#?]+)(?:[#?][^)]*)?\)/g),
+    ].map((match) => match[1]);
+    const obsidianImageLinks = [
+      ...content.matchAll(/!\[\[([^|\]#]+)(?:\|[^\]]*)?\]\]/g),
+    ].map((match) => match[1]);
+    const references = [...new Set([...markdownImageLinks, ...obsidianImageLinks])]
+      .map((name) => decodeURIComponent(name.trim()))
+      .filter((name) => /\.(avif|gif|jpe?g|png|svg|webp)$/i.test(name))
+      .map((name) => name.split('/').pop() ?? name);
+
+    if (!references.length || !markdownFile.parents?.[0]) {
+      return [];
+    }
+
+    const parentFiles = await this.listFilesRecursively(
+      markdownFile.parents[0],
+    );
+    return references
+      .map((reference) => {
+        const file = parentFiles.find(
+          (candidate) =>
+            candidate.name?.toLowerCase() === reference.toLowerCase(),
+        );
+        return file?.id
+          ? {
+              ...this.toItem(file),
+              streamUrl: `/google-drive/files/${file.id}/stream`,
+              imageUrl: `/google-drive/files/${file.id}/stream`,
+            }
+          : null;
+      })
+      .filter((file): file is ResolvedImageFile => !!file);
+  }
+
+  private async listFilesRecursively(folderId: string) {
+    const children = await this.listChildren(folderId);
+    const files: drive_v3.Schema$File[] = [];
+
+    for (const child of children) {
+      if (child.mimeType === GOOGLE_FOLDER_MIME && child.id) {
+        files.push(...(await this.listFilesRecursively(child.id)));
+      } else {
+        files.push(child);
+      }
+    }
+
+    return files;
   }
 
   private escapeDriveQueryValue(value: string) {

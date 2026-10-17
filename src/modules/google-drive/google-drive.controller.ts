@@ -130,7 +130,7 @@ export class GoogleDriveController {
 
   @Get('files/:fileId/lesson')
   @ApiOperation({
-    summary: 'Lấy bài học Markdown kèm các audio được tham chiếu',
+    summary: 'Lấy bài học Markdown kèm audio và ảnh được tham chiếu',
   })
   @ApiParam({ name: 'fileId', description: 'Markdown file ID' })
   async getLesson(@Param('fileId') fileId: string) {

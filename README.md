@@ -43,10 +43,11 @@ Authorize with a JWT access token, then use the **Google Drive** endpoints:
   returns each match with its path.
 - `GET /api/google-drive/files/:fileId`: returns metadata for one file.
 - `GET /api/google-drive/files/:fileId/content`: downloads a text or Markdown
-  file and returns its content in the `content` field. Markdown links to files
-  in a sibling `Audio` folder are resolved in the `audioFiles` field.
+  file and returns its content in the `content` field. Markdown links to media
+  files in the same folder are resolved in the `audioFiles` and `imageFiles`
+  fields. Each resolved file includes a backend `streamUrl`.
 - `GET /api/google-drive/files/:fileId/lesson`: returns a lesson-shaped
-  response with `title`, `markdown`, and resolved `audios`.
+  response with `title`, `markdown`, resolved `audios`, and resolved `images`.
 - `GET /api/google-drive/files/:fileId/stream`: streams an audio/media file.
 - `GET /api/google-drive/files/:fileId/download`: downloads an audio/media
   file.
@@ -56,6 +57,14 @@ endpoint is suitable for an HTML `<audio>` element. Audio references in
 Markdown should use a relative link such as `[listen](Audio/audio-01.mp3)` or
 `[listen](../Audio/audio-01.mp3)`, and the corresponding file must exist in a
 folder named `Audio` beside the Markdown file.
+
+Image references in Markdown should use the usual syntax, for example
+`![Internet users](image.png)` or `![[image.png|700]]`. The service searches
+the Markdown file's folder and its subfolders. The lesson response returns the matching file
+in `images` with an `imageUrl` such as
+`/api/google-drive/files/<fileId>/stream`. Because this endpoint is protected
+by JWT, the frontend should request it with the access token, convert the
+response to a Blob URL, and use that Blob URL as the image `src`.
 
 The service reads the folder directly from Google Drive; it does not store the
 file list in the database. Configure `GOOGLE_DRIVE_FOLDER_ID`,
