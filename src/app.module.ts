@@ -6,6 +6,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './modules/auth/auth.module';
 import jwtConfig from './config/jwt.config';
 import googleConfig from './config/google.config';
+import geminiConfig from './config/gemini.config';
 import elevenlabsConfig from './config/elevenlabs.config';
 import cloudinaryConfig from './config/cloudinary.config';
 import { LoggerMiddleware } from './common/middleware/logger.middleware';
@@ -26,7 +27,13 @@ import { RedisModule } from './common/cache/redis.module';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      load: [jwtConfig, googleConfig, elevenlabsConfig, cloudinaryConfig],
+      load: [
+        jwtConfig,
+        googleConfig,
+        geminiConfig,
+        elevenlabsConfig,
+        cloudinaryConfig,
+      ],
     }),
     ScheduleModule.forRoot(),
     RedisModule,

@@ -6,6 +6,6 @@ import { SharedTtsAudioService } from './services/shared-tts-audio.service';
 @Module({
   controllers: [UserWordController],
   providers: [UserWordsService, SharedTtsAudioService],
-  exports: [UserWordsService],
+  exports: [UserWordsService, SharedTtsAudioService],
 })
 export class UserWordModule {}

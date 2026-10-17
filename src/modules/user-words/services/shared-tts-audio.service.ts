@@ -1,323 +1,221 @@
-import {
-  BadGatewayException,
-  Injectable,
-  InternalServerErrorException,
-  Logger,
-} from '@nestjs/common';
+import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { GoogleGenAI } from '@google/genai';
+import { BadGatewayException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { v2 as cloudinary } from 'cloudinary';
 import { PrismaService } from 'src/prisma/prisma.service';
+
+interface InlineAudio {
+  data?: string;
+  mimeType?: string;
+}
+
+interface GeminiAudioResponse {
+  candidates?: Array<{
+    content?: {
+      parts?: Array<{ inlineData?: InlineAudio }>;
+    };
+  }>;
+}
 
 @Injectable()
 export class SharedTtsAudioService {
   private readonly logger = new Logger(SharedTtsAudioService.name);
-  private readonly profileCacheTtlMs = 5 * 60 * 1000;
-  private systemProfilesCache: CachedProfiles | null = null;
-  private readonly userProfilesCache = new Map<number, CachedProfiles>();
-
-  private cleanValue(value: string | undefined | null) {
-    return value?.trim() ?? '';
-  }
-
-  private isCacheValid(
-    cache: CachedProfiles | null | undefined,
-  ): cache is CachedProfiles {
-    return cache !== null && cache !== undefined && cache.expiresAt > Date.now();
-  }
-
-  private maskSecret(value: string | undefined | null) {
-    if (!value) {
-      return 'missing';
-    }
-
-    if (value.length <= 8) {
-      return '*'.repeat(value.length);
-    }
-
-    return `${value.slice(0, 4)}${'*'.repeat(value.length - 8)}${value.slice(-4)}`;
-  }
+  private readonly s3: S3Client | null;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
   ) {
-    const cloudName = this.configService.get<string>('cloudinary.cloudName');
-    const apiKey = this.configService.get<string>('cloudinary.apiKey');
-    const apiSecret = this.configService.get<string>('cloudinary.apiSecret');
+    const endpoint = process.env.S3_ENDPOINT;
+    const accessKeyId = process.env.S3_ACCESS_KEY_ID;
+    const secretAccessKey = process.env.S3_SECRET_ACCESS_KEY;
 
-    cloudinary.config({
-      cloud_name: cloudName,
-      api_key: apiKey,
-      api_secret: apiSecret,
-      secure: true,
-    });
+    this.s3 =
+      endpoint && accessKeyId && secretAccessKey
+        ? new S3Client({
+            region: process.env.S3_REGION ?? 'ap-southeast-1',
+            endpoint,
+            forcePathStyle: true,
+            credentials: { accessKeyId, secretAccessKey },
+          })
+        : null;
 
-    this.logger.log(
-      `Cloudinary init cloud=${cloudName ?? 'missing'} key=${this.maskSecret(apiKey)} secret=${this.maskSecret(apiSecret)}`,
-    );
-  }
-
-  async ensureMeaningTtsAudio(params: {
-    userId: number | null;
-    meaningId: number;
-    definition: string;
-    ttsAudioUrl: string | null;
-  }) {
-    this.logger.log(
-      `[TTS] start user=${params.userId} meaning=${params.meaningId}`,
-    );
-
-    if (params.ttsAudioUrl) {
-      this.logger.log(
-        `[TTS] skip existing audio meaning=${params.meaningId} url=${params.ttsAudioUrl}`,
-      );
-      return params.ttsAudioUrl;
-    }
-
-    const profiles = await this.resolveTtsProfiles(params.userId);
-    if (!profiles.length) {
+    if (!this.s3) {
       this.logger.warn(
-        `No active TTS profile found for user=${params.userId}, skip generation`,
+        'Supabase Storage is not configured; Gemini TTS audio will be skipped',
       );
-      return null;
     }
+  }
 
-    const text = params.definition;
-    let audioBuffer: Buffer | null = null;
-    let lastLimitError: Error | null = null;
-
-    for (const [index, profile] of profiles.entries()) {
-      try {
-        this.logger.log(
-          `[TTS] profile ${index + 1}/${profiles.length} selected user=${params.userId} voice=${profile.voiceId} model=${profile.modelId} key=${this.maskSecret(profile.apiKey)}`,
-        );
-        audioBuffer = await this.generateFromElevenLabs(
-          text,
-          profile.apiKey,
-          profile.voiceId,
-          profile.modelId,
-        );
-        break;
-      } catch (error) {
-        if (!this.isRetryableElevenLabsError(error)) {
-          throw error;
-        }
-
-        lastLimitError = error instanceof Error ? error : new Error(String(error));
-        this.logger.warn(
-          `[TTS] profile ${index + 1}/${profiles.length} is unavailable, trying next profile`,
-        );
-      }
-    }
-
-    if (!audioBuffer) {
-      throw lastLimitError ?? new BadGatewayException('All ElevenLabs profiles are unavailable');
-    }
-
-    this.logger.log(
-      `[TTS] ElevenLabs success meaning=${params.meaningId} bytes=${audioBuffer.length}`,
-    );
-
-    const uploaded = await this.uploadToCloudinary(audioBuffer, params.meaningId);
-
-    this.logger.log(
-      `[TTS] Cloudinary success meaning=${params.meaningId} publicId=${uploaded.public_id} url=${uploaded.secure_url}`,
-    );
-
-    const updated = await this.prisma.wordMeaning.updateMany({
-      where: { id: params.meaningId, ttsAudioUrl: null },
-      data: {
-        ttsAudioUrl: uploaded.secure_url,
-        ttsPublicId: uploaded.public_id,
-      },
-    });
-
-    if (updated.count === 0) {
+  async ensureWordPronunciation(params: {
+    wordId: number;
+    word: string;
+    ukAudioUrl: string | null;
+    usAudioUrl: string | null;
+  }): Promise<{ uk: string | null; us: string | null }> {
+    const apiKey = this.configService.get<string>('gemini.apiKey');
+    const enabled = this.configService.get<boolean>('gemini.enabled') ?? false;
+    if (!enabled || !apiKey || !this.s3) {
       this.logger.warn(
-        `[TTS] db update skipped meaning=${params.meaningId} (audio already set by another request?)`,
+        `[TTS] skipped word=${params.word}: Gemini or Supabase Storage is not configured`,
       );
-      const current = await this.prisma.wordMeaning.findUnique({
-        where: { id: params.meaningId },
-        select: { ttsAudioUrl: true },
-      });
-      return current?.ttsAudioUrl ?? null;
+      return { uk: params.ukAudioUrl, us: params.usAudioUrl };
     }
 
-    this.logger.log(`[TTS] done meaning=${params.meaningId}`);
-
-    return uploaded.secure_url;
-  }
-
-  private async resolveTtsProfiles(userId: number | null) {
-    if (userId !== null) {
-      const cachedUserProfiles = this.userProfilesCache.get(userId);
-      if (this.isCacheValid(cachedUserProfiles)) {
-        if (cachedUserProfiles.profiles.length) {
-          return cachedUserProfiles.profiles;
-        }
-      } else {
-        const userProfiles = await this.loadProfiles(userId);
-        this.userProfilesCache.set(userId, this.createCache(userProfiles));
-        if (userProfiles.length) {
-          return userProfiles;
-        }
-      }
-    }
-
-    const systemProfilesCache = this.systemProfilesCache;
-    if (this.isCacheValid(systemProfilesCache)) {
-      return systemProfilesCache.profiles;
-    }
-
-    const systemProfiles = await this.loadProfiles(null);
-    this.systemProfilesCache = this.createCache(systemProfiles);
-    return systemProfiles;
-  }
-
-  private async loadProfiles(userId: number | null) {
-    const configs = await this.prisma.userTtsConfig.findMany({
-      where: { userId, isActive: true, provider: 'elevenlabs' },
-      include: { voiceModels: true },
-      orderBy: { createdAt: 'desc' },
-    });
-    const profiles = this.toProfiles(configs);
-    this.logger.log(
-      `[TTS] loaded database profiles user=${userId} configs=${configs.length} profiles=${profiles.length}`,
-    );
-    return profiles;
-  }
-
-  private createCache(profiles: TtsProfile[]): CachedProfiles {
-    return {
-      profiles,
-      expiresAt: Date.now() + this.profileCacheTtlMs,
-    };
-  }
-
-  clearProfileCache(userId?: number) {
-    if (userId === undefined) {
-      this.systemProfilesCache = null;
-      this.userProfilesCache.clear();
-      return;
-    }
-
-    this.userProfilesCache.delete(userId);
-  }
-
-  private toProfiles(
-    configs: Array<{
-      apiKey: string;
-      voiceModels: Array<{ voiceId: string; modelId: string }>;
-    }>,
-  ) {
-    return configs.flatMap((config) =>
-      config.voiceModels.map((voiceModel) => ({
-        apiKey: this.cleanValue(config.apiKey),
-        voiceId: this.cleanValue(voiceModel.voiceId),
-        modelId: this.cleanValue(voiceModel.modelId),
-      })),
-    );
-  }
-
-  private isRetryableElevenLabsError(error: unknown) {
-    const message = error instanceof Error ? error.message : String(error);
-    return /\b(401|402|429)\b/.test(message) ||
-      /(quota|credit|rate.?limit|too many requests)/i.test(message);
-  }
-
-  private async generateFromElevenLabs(
-    text: string,
-    apiKey: string,
-    voiceId: string,
-    modelId: string,
-  ) {
-    const cleanApiKey = this.cleanValue(apiKey);
-    const cleanVoiceId = this.cleanValue(voiceId);
-    const cleanModelId = this.cleanValue(modelId);
-
-    this.logger.log(
-      `[TTS] ElevenLabs request voice=${cleanVoiceId} model=${cleanModelId} key=${this.maskSecret(cleanApiKey)}`,
-    );
-
-    if (!cleanApiKey || !cleanVoiceId || !cleanModelId) {
-      throw new BadGatewayException('ElevenLabs profile contains empty apiKey/voiceId/modelId');
-    }
-
-    const response = await fetch(
-      `https://api.elevenlabs.io/v1/text-to-speech/${cleanVoiceId}`,
-      {
-        method: 'POST',
-        headers: {
-          'xi-api-key': cleanApiKey,
-          'Content-Type': 'application/json',
-          Accept: 'audio/mpeg',
-        },
-        body: JSON.stringify({
-          text,
-          model_id: cleanModelId,
-        }),
-      },
-    );
-
-    if (!response.ok) {
-      const errorMessage = await response.text();
-      this.logger.error(
-        `[TTS] ElevenLabs failed status=${response.status} body=${errorMessage || response.statusText}`,
-      );
-      throw new BadGatewayException(
-        `ElevenLabs request failed: ${errorMessage || response.statusText}`,
-      );
-    }
-
-    return Buffer.from(await response.arrayBuffer());
-  }
-
-  private async uploadToCloudinary(audioBuffer: Buffer, meaningId: number) {
-    const folder = this.configService.get<string>('cloudinary.folder');
-    const publicId = `meaning-${meaningId}-${Date.now()}`;
-
-    this.logger.log(
-      `[TTS] Cloudinary upload start folder=${folder ?? 'missing'} publicId=${publicId} bytes=${audioBuffer.length}`,
-    );
-
+    let ukAudioUrl = params.ukAudioUrl;
+    let usAudioUrl = params.usAudioUrl;
     try {
-      return await new Promise<any>((resolve, reject) => {
-        const uploadStream = cloudinary.uploader.upload_stream(
-          {
-            resource_type: 'video',
-            folder,
-            public_id: publicId,
-            format: 'mp3',
-          },
-          (error, result) => {
-            if (error || !result) {
-              this.logger.error(
-                `[TTS] Cloudinary callback error publicId=${publicId} error=${(error as Error | undefined)?.message ?? 'unknown'}`,
-              );
-              reject(error || new Error('Cloudinary upload failed'));
-              return;
-            }
-            resolve(result);
-          },
+      if (!ukAudioUrl) {
+        const audio = await this.generateAudio(
+          params.word,
+          apiKey,
+          'British English',
         );
+        ukAudioUrl = await this.uploadToSupabase(
+          audio,
+          this.buildStorageKey('uk', params.word, params.wordId),
+        );
+      }
+      if (!usAudioUrl) {
+        const audio = await this.generateAudio(
+          params.word,
+          apiKey,
+          'American English',
+        );
+        usAudioUrl = await this.uploadToSupabase(
+          audio,
+          this.buildStorageKey('us', params.word, params.wordId),
+        );
+      }
 
-        uploadStream.end(audioBuffer);
+      await this.prisma.word.update({
+        where: { id: params.wordId },
+        data: { ukAudioUrl, usAudioUrl },
       });
+      return { uk: ukAudioUrl, us: usAudioUrl };
     } catch (error) {
-      this.logger.error('Cloudinary upload failed', error as Error);
-      throw new InternalServerErrorException('Cloudinary upload failed');
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `[TTS] Gemini pronunciation failed word=${params.word}: ${message}`,
+      );
+      throw new BadGatewayException('Gemini TTS audio generation failed');
     }
   }
 
+  private async generateAudio(
+    word: string,
+    apiKey: string,
+    accent: string,
+  ): Promise<Buffer> {
+    const ai = new GoogleGenAI({ apiKey });
+    const model =
+      this.configService.get<string>('gemini.ttsModel') ??
+      'gemini-2.5-flash-preview-tts';
+    const voice = this.configService.get<string>('gemini.ttsVoice') ?? 'Kore';
+
+    const response = (await ai.models.generateContent({
+      model,
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            {
+              text: `Pronounce only this English word: ${word}. Use a natural ${accent} accent. Do not say anything else.`,
+            },
+          ],
+        },
+      ],
+      config: {
+        responseModalities: ['AUDIO'],
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: { voiceName: voice },
+          },
+        },
+      },
+    })) as unknown as GeminiAudioResponse;
+
+    const inlineData = response.candidates?.[0]?.content?.parts?.find(
+      (part) => part.inlineData?.data,
+    )?.inlineData;
+    if (!inlineData?.data) {
+      throw new Error('Gemini TTS returned no audio data');
+    }
+
+    const pcm = Buffer.from(inlineData.data, 'base64');
+    return this.toWav(pcm, inlineData.mimeType);
+  }
+
+  private async uploadToSupabase(audio: Buffer, key: string): Promise<string> {
+    if (!this.s3) {
+      throw new Error('Supabase Storage is not configured');
+    }
+
+    await this.s3.send(
+      new PutObjectCommand({
+        Bucket: process.env.S3_BUCKET ?? 'vocab',
+        Key: key,
+        Body: audio,
+        ContentType: 'audio/wav',
+        CacheControl: 'public, max-age=31536000, immutable',
+      }),
+    );
+
+    return `${this.publicBaseUrl}/${key}`;
+  }
+
+  private buildStorageKey(
+    accent: string,
+    word: string,
+    wordId: number,
+  ): string {
+    const slug =
+      word
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]+/g, '-') || `word-${wordId}`;
+    const letter = /^[a-z]/.test(slug) ? slug[0] : '0-9';
+    return `pronunciation/${accent}/${letter}/${slug}-${wordId}.wav`;
+  }
+
+  private get publicBaseUrl(): string {
+    const configured = process.env.PUBLIC_BASE_URL;
+    if (configured) return configured.replace(/\/$/, '');
+
+    const endpoint = process.env.S3_ENDPOINT;
+    if (!endpoint) {
+      throw new Error('PUBLIC_BASE_URL or S3_ENDPOINT is required');
+    }
+
+    const projectRef = new URL(endpoint).hostname.split('.')[0];
+    const bucket = process.env.S3_BUCKET ?? 'vocab';
+    return `https://${projectRef}.supabase.co/storage/v1/object/public/${bucket}`;
+  }
+
+  private toWav(pcm: Buffer, mimeType = ''): Buffer {
+    const params = new URLSearchParams(mimeType.split(';').slice(1).join('&'));
+    const sampleRate = Number(params.get('rate') ?? 24000);
+    const bitsPerSample = 16;
+    const channels = 1;
+    const byteRate = sampleRate * channels * (bitsPerSample / 8);
+    const blockAlign = channels * (bitsPerSample / 8);
+    const header = Buffer.alloc(44);
+
+    header.write('RIFF', 0);
+    header.writeUInt32LE(36 + pcm.length, 4);
+    header.write('WAVE', 8);
+    header.write('fmt ', 12);
+    header.writeUInt32LE(16, 16);
+    header.writeUInt16LE(1, 20);
+    header.writeUInt16LE(channels, 22);
+    header.writeUInt32LE(sampleRate, 24);
+    header.writeUInt32LE(byteRate, 28);
+    header.writeUInt16LE(blockAlign, 32);
+    header.writeUInt16LE(bitsPerSample, 34);
+    header.write('data', 36);
+    header.writeUInt32LE(pcm.length, 40);
+
+    return Buffer.concat([header, pcm]);
+  }
 }
-
-type TtsProfile = {
-  apiKey: string;
-  voiceId: string;
-  modelId: string;
-};
-
-type CachedProfiles = {
-  profiles: TtsProfile[];
-  expiresAt: number;
-};

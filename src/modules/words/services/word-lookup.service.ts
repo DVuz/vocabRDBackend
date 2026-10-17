@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { LongmanCrawlerService } from './longman-crawler.service';
+import { GeminiWordService } from './gemini-word.service';
 
 /**
  * Service for looking up words and their meanings from the database.
@@ -11,6 +12,7 @@ export class WordLookupService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly longmanCrawlerService: LongmanCrawlerService,
+    private readonly geminiWordService: GeminiWordService,
   ) {}
 
   async findWordWithMeanings(word: string, allowCrawl = true) {
@@ -46,10 +48,22 @@ export class WordLookupService {
     const crawledAliasRecord = await this.prisma.wordAlias.findUnique({
       where: { alias: word },
     });
-    if (!crawledAliasRecord) return null;
+    if (crawledAliasRecord) {
+      return this.prisma.word.findUnique({
+        where: { word: crawledAliasRecord.canonicalWord },
+        include: { wordMeanings: true },
+      });
+    }
+
+    await this.geminiWordService.generateAndSave(word);
+
+    const generatedAliasRecord = await this.prisma.wordAlias.findUnique({
+      where: { alias: word },
+    });
+    const generatedWord = generatedAliasRecord?.canonicalWord ?? word;
 
     return this.prisma.word.findUnique({
-      where: { word: crawledAliasRecord.canonicalWord },
+      where: { word: generatedWord },
       include: { wordMeanings: true },
     });
   }

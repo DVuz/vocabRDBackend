@@ -46,11 +46,11 @@ export class UserWordsService {
       throw new ConflictException('User already saved this word meaning');
     }
 
-    await this.sharedTtsAudioService.ensureMeaningTtsAudio({
-      userId,
-      meaningId: meaning.id,
-      definition: meaning.definition,
-      ttsAudioUrl: meaning.ttsAudioUrl,
+    await this.sharedTtsAudioService.ensureWordPronunciation({
+      wordId: meaning.word.id,
+      word: meaning.word.word,
+      ukAudioUrl: meaning.word.ukAudioUrl,
+      usAudioUrl: meaning.word.usAudioUrl,
     });
 
     const nextReviewAt = new Date(
