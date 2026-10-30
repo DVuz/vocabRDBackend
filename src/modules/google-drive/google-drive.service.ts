@@ -12,7 +12,7 @@ import { RedisService } from 'src/common/cache/redis.service';
 const GOOGLE_FOLDER_MIME = 'application/vnd.google-apps.folder';
 const DRIVE_CACHE_TTL_SECONDS = 300;
 const DRIVE_TREE_CACHE_PREFIX = 'google-drive:tree:v2:';
-const DRIVE_FILE_CACHE_PREFIX = 'google-drive:file:v4:';
+const DRIVE_FILE_CACHE_PREFIX = 'google-drive:file:v7:';
 export interface DriveTreeItem {
   id: string;
   name: string;
@@ -267,13 +267,14 @@ export class GoogleDriveService {
           : JSON.stringify(response.data);
       const audioFiles = await this.findReferencedAudio(metadata, content);
       const imageFiles = await this.findReferencedImages(metadata, content);
+      const cleanedContent = this.removeAudioElements(content);
 
       const result = {
         id: metadata.id,
         name: metadata.name,
         mimeType: metadata.mimeType,
         modifiedTime: metadata.modifiedTime,
-        content,
+        content: cleanedContent,
         audioFiles,
         imageFiles,
       };
@@ -328,13 +329,43 @@ export class GoogleDriveService {
     const obsidianLinks = [
       ...content.matchAll(/!?\[\[([^|\]#]+)(?:\|[^\]]*)?\]\]/g),
     ].map((match) => match[1]);
-    const references = [...new Set([...markdownLinks, ...obsidianLinks])]
+    const htmlAudioSources = [
+      ...content.matchAll(/<audio\b[^>]*\bsrc\s*=\s*["']([^"']+)["'][^>]*>/gi),
+    ].map((match) => match[1]);
+    const references = [
+      ...new Set([...markdownLinks, ...obsidianLinks, ...htmlAudioSources]),
+    ]
       .map((name) => decodeURIComponent(name.trim()))
       .filter((name) => /\.(mp3|wav|m4a|ogg|webm)$/i.test(name))
-      .map((name) => name.split('/').pop() ?? name);
+      .map((reference) => ({
+        name: reference.split('/').pop() ?? reference,
+        url: this.isDirectAudioUrl(reference) ? reference : undefined,
+      }));
 
-    if (!references.length || !markdownFile.parents?.[0]) {
-      return [];
+    const directAudioFiles = references
+      .filter(
+        (reference): reference is { name: string; url: string } =>
+          reference.url !== undefined,
+      )
+      .map((reference) => ({
+        id: reference.url,
+        name: reference.name,
+        type: 'file' as const,
+        mimeType: this.getAudioMimeType(reference.name),
+        streamUrl: reference.url,
+      }));
+
+    const directAudioNames = new Set(
+      directAudioFiles.map((file) => file.name.toLowerCase()),
+    );
+    const driveReferences = references
+      .filter((reference) => !reference.url)
+      .filter(
+        (reference) => !directAudioNames.has(reference.name.toLowerCase()),
+      );
+
+    if (!driveReferences.length || !markdownFile.parents?.[0]) {
+      return directAudioFiles;
     }
 
     const parentFiles = await this.listChildren(markdownFile.parents[0]);
@@ -344,15 +375,15 @@ export class GoogleDriveService {
         file.name?.toLowerCase() === 'audio',
     );
     if (!audioFolder?.id) {
-      return [];
+      return directAudioFiles;
     }
 
     const audioFiles = await this.listChildren(audioFolder.id);
-    return references
+    const resolvedDriveFiles = driveReferences
       .map((reference) => {
         const file = audioFiles.find(
           (candidate) =>
-            candidate.name?.toLowerCase() === reference.toLowerCase(),
+            candidate.name?.toLowerCase() === reference.name.toLowerCase(),
         );
         return file
           ? {
@@ -362,6 +393,38 @@ export class GoogleDriveService {
           : null;
       })
       .filter((file): file is ResolvedMediaFile => !!file);
+
+    return [...directAudioFiles, ...resolvedDriveFiles];
+  }
+
+  private removeAudioElements(content: string): string {
+    return content
+      .replace(/<audio\b[^>]*>[\s\S]*?<\/audio\s*>/gi, '')
+      .replace(/<audio\b[^>]*\/?>/gi, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
+  private isDirectAudioUrl(reference: string): boolean {
+    try {
+      const url = new URL(reference);
+      return url.protocol === 'http:' || url.protocol === 'https:';
+    } catch {
+      return false;
+    }
+  }
+
+  private getAudioMimeType(name: string): string {
+    const extension = name.split('.').pop()?.toLowerCase();
+    return (
+      {
+        mp3: 'audio/mpeg',
+        wav: 'audio/wav',
+        m4a: 'audio/mp4',
+        ogg: 'audio/ogg',
+        webm: 'audio/webm',
+      }[extension ?? ''] ?? 'audio/*'
+    );
   }
 
   private async findReferencedImages(
@@ -374,7 +437,9 @@ export class GoogleDriveService {
     const obsidianImageLinks = [
       ...content.matchAll(/!\[\[([^|\]#]+)(?:\|[^\]]*)?\]\]/g),
     ].map((match) => match[1]);
-    const references = [...new Set([...markdownImageLinks, ...obsidianImageLinks])]
+    const references = [
+      ...new Set([...markdownImageLinks, ...obsidianImageLinks]),
+    ]
       .map((name) => decodeURIComponent(name.trim()))
       .filter((name) => /\.(avif|gif|jpe?g|png|svg|webp)$/i.test(name))
       .map((name) => name.split('/').pop() ?? name);

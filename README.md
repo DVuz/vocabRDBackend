@@ -32,7 +32,9 @@ Authorize with a JWT access token, then use the **Google Drive** endpoints:
 
 - `GET /api/google-drive/files`: returns file metadata from the configured
   folder. Use `?search=lesson` to search by file name. It does not return file
-  content.
+  content. Direct audio URLs in Markdown (for example, Supabase Storage URLs)
+  are returned as-is and take precedence over a same-named Google Drive file;
+  relative audio references continue to resolve from the `Audio` folder.
 - `GET /api/google-drive/files?folderId=...`: lists direct children of another
   folder.
 - `GET /api/google-drive/tree`: returns the complete recursive folder tree.
@@ -54,9 +56,11 @@ Authorize with a JWT access token, then use the **Google Drive** endpoints:
 
 All endpoints require `Authorization: Bearer <access_token>`. The `stream`
 endpoint is suitable for an HTML `<audio>` element. Audio references in
-Markdown should use a relative link such as `[listen](Audio/audio-01.mp3)` or
-`[listen](../Audio/audio-01.mp3)`, and the corresponding file must exist in a
-folder named `Audio` beside the Markdown file.
+Markdown can use a direct URL such as a public Supabase Storage URL,
+`<audio controls src="https://.../file.wav"></audio>`, or a relative link such as
+`[listen](Audio/audio-01.mp3)` or
+`[listen](../Audio/audio-01.mp3)`. Relative references require the
+corresponding file to exist in a folder named `Audio` beside the Markdown file.
 
 Image references in Markdown should use the usual syntax, for example
 `![Internet users](image.png)` or `![[image.png|700]]`. The service searches
